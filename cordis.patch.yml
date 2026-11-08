@@ -1,0 +1,6 @@
+# dsh-ownsync bundle patch
+# 安装:dsh plugin --profile web add dsh-ownsync
+# 声明了 dsh.bundle 的依赖由 dsh 自动追加进 bundle 层,这里挂本插件自己。
+- insert:
+    - id: dsh-ownsync
+      name: "dsh-ownsync"

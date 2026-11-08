@@ -1,0 +1,23 @@
+# 依赖
+node_modules/
+
+# 打包产物
+*.tgz
+
+# 本地参考材料与备份（不入库）
+notes/
+backup/
+chatsync/
+
+# 日志与系统文件
+*.log
+.DS_Store
+Thumbs.db
+
+# 编辑器
+.idea/
+.vscode/
+
+# 环境变量与密钥
+.env
+.env.*

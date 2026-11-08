@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Sync",
+    "description": "Upload workspaces, sessions and chat attachments to your own Git repository, or download them back."
+  }
+}
