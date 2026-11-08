@@ -134,6 +134,24 @@ function texts(node) {
   return collected.join('|');
 }
 
+function pillButton(tree) {
+  let found = null;
+  const walk = node => {
+    if (!node || typeof node !== 'object' || found) return;
+    if (
+      node.type === 'button' &&
+      typeof node.props?.className === 'string' &&
+      node.props.className.includes('os-pill')
+    ) {
+      found = node;
+      return;
+    }
+    for (const child of node.children || []) walk(child);
+  };
+  walk(tree);
+  return found;
+}
+
 const statusPayload = overrides => ({
   configured: false,
   remote: '',
@@ -275,6 +293,130 @@ test('本机有改动时卡片显示未上传数量', async () => {
   await new Promise(resolve => setTimeout(resolve, 20));
   const content = texts(draw(harness, dock.component));
   assert.match(content, /本机有 2 处未上传改动/);
+});
+
+test('点击状态胶囊显示有改动的文件', async () => {
+  const now = Date.now();
+  const { find, harness } = mount(async url => ({
+    json: async () =>
+      String(url).includes('/check')
+        ? {
+            ok: true,
+            remote: {
+              inSync: true,
+              localDirty: true,
+              localChanges: { count: 2 },
+              remoteVersion: 1,
+              remoteUpdatedAt: now,
+            },
+          }
+        : statusPayload({
+            configured: true,
+            remote: 'ssh://git@example/srv/git/dsh-sync.git',
+            local: { version: 1, baseSha: 'abc', updatedAt: now, pending: [] },
+            localChanges: {
+              count: 2,
+              sample: ['sessions/g/session-x/a.jsonl', 'sessions/g/session-y/a.jsonl'],
+              details: [
+                { path: 'sessions/g/session-x/a.jsonl', kind: 'sessions', label: 'Ownsync · 学习源码' },
+                { path: 'sessions/g/session-y/a.jsonl', kind: 'sessions', label: 'Ownsync · M0' },
+              ],
+            },
+          }),
+  }));
+  const dock = find('sidebar.footer.action');
+  draw(harness, dock.component);
+  await new Promise(resolve => setTimeout(resolve, 20));
+
+  let tree = draw(harness, dock.component);
+  assert.match(texts(tree), /本机有 2 处未上传改动/);
+  assert.doesNotMatch(texts(tree), /学习源码/);
+
+  const pill = pillButton(tree);
+  assert.ok(pill, '状态胶囊不是可点击的');
+  pill.props.onClick();
+
+  tree = draw(harness, dock.component);
+  assert.match(texts(tree), /有改动的文件（2）/);
+  assert.match(texts(tree), /Ownsync · 学习源码/);
+  assert.match(texts(tree), /Ownsync · M0/);
+});
+
+test('上传后点「已同步」显示本次改动', async () => {
+  const now = Date.now();
+  let uploaded = false;
+  const { find, harness } = mount(async url => {
+    if (String(url).includes('/upload')) {
+      uploaded = true;
+      return {
+        json: async () => ({
+          ok: true,
+          uploaded: true,
+          version: 46,
+          files: 142,
+          changedCount: 2,
+          changedFiles: [
+            { path: 'a', label: 'Ownsync · 学习源码' },
+            { path: 'b', label: 'Ownsync · M0' },
+          ],
+        }),
+      };
+    }
+    if (String(url).includes('/check')) {
+      return {
+        json: async () => ({
+          ok: true,
+          remote: {
+            inSync: true,
+            localDirty: !uploaded,
+            localChanges: { count: uploaded ? 0 : 2 },
+            remoteVersion: uploaded ? 46 : 45,
+            remoteUpdatedAt: now,
+          },
+        }),
+      };
+    }
+    return {
+      json: async () =>
+        statusPayload({
+          configured: true,
+          remote: 'ssh://git@example/srv/git/dsh-sync.git',
+          local: { version: uploaded ? 46 : 45, baseSha: 'abc', updatedAt: now, pending: [] },
+          localChanges: uploaded
+            ? { count: 0 }
+            : {
+                count: 2,
+                sample: ['a', 'b'],
+                details: [
+                  { path: 'a', label: 'Ownsync · 学习源码' },
+                  { path: 'b', label: 'Ownsync · M0' },
+                ],
+              },
+        }),
+    };
+  });
+  const dock = find('sidebar.footer.action');
+  draw(harness, dock.component);
+  await new Promise(resolve => setTimeout(resolve, 20));
+
+  let tree = draw(harness, dock.component);
+  const upload = buttonByLabel(tree, '上传');
+  assert.ok(upload, '没找到上传按钮');
+  upload.props.onClick();
+  await new Promise(resolve => setTimeout(resolve, 30));
+
+  tree = draw(harness, dock.component);
+  assert.match(texts(tree), /已同步/);
+  assert.doesNotMatch(texts(tree), /已上传 v46/);
+
+  const pill = pillButton(tree);
+  assert.ok(pill, '已同步状态下胶囊不可点击');
+  pill.props.onClick();
+
+  tree = draw(harness, dock.component);
+  assert.match(texts(tree), /已上传 v46，这次更新了 2 个改动/);
+  assert.match(texts(tree), /Ownsync · 学习源码/);
+  assert.match(texts(tree), /Ownsync · M0/);
 });
 
 test('写回遮罩已注册，默认不渲染', () => {

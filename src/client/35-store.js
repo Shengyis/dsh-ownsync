@@ -44,6 +44,7 @@ const syncState = {
   busy: '',
   checking: false,
   intervals: readIntervals(),
+  lastUpload: null,
   notice: null,
   confirm: null,
   recovering: null,
@@ -190,6 +191,17 @@ async function runSyncAction(kind, token) {
     } else if (!result || result.ok === false || result.error) {
       publishSync({ notice: { kind: 'err', text: errorText(result) } });
       openPopover();
+    } else if (kind === 'upload') {
+      // 上传结果不直接弹提示条，改成点「已同步」时在卡片里展开
+      publishSync({
+        lastUpload: {
+          version: result.version,
+          files: result.files,
+          changedCount: result.upToDate ? 0 : result.changedCount || 0,
+          changedFiles: result.changedFiles || [],
+        },
+        notice: null,
+      });
     } else {
       // 会话被宿主占用：走自动恢复（遮罩 → 切空白会话 → 探测 → 重试 → 切回）
       const stuck =

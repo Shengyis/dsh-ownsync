@@ -201,6 +201,41 @@ test('一次删掉多个文件时上传要先确认', async () => {
   }
 });
 
+test('有改动的文件显示工作区与会话标题', async () => {
+  const { root, homeA, config } = setup();
+  try {
+    const file = sessionPath(ID_A);
+    writeFile(homeA, file, sessionBytes(ID_A, 2));
+    writeFile(
+      homeA,
+      'storages/workspace.json',
+      Buffer.from(
+        JSON.stringify({
+          tables: {
+            workspaces: {
+              w1: { path: 'E:/Demo', title: 'Demo 工作区', sessionIds: [`session-${ID_A}`] },
+            },
+          },
+        }),
+      ),
+    );
+    writeFile(
+      homeA,
+      `storages/session_projcache/sessions/session-${ID_A}.json`,
+      Buffer.from(JSON.stringify({ record: { rows: { title: { val: '测试会话标题' } } } })),
+    );
+    const a = engineFor(homeA, config);
+    await a.upload();
+
+    writeFile(homeA, file, sessionBytes(ID_A, 3));
+    const changes = a.status().localChanges;
+    assert.equal(changes.count, 1);
+    assert.equal(changes.details[0].label, 'Demo 工作区 · 测试会话标题');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('服务器为空时检查标记 remoteEmpty，首次上传建出 v1', async () => {
   const { root, homeA, config } = setup();
   try {
@@ -241,7 +276,9 @@ test('上传后本机版本号、清单与服务器一致', async () => {
     writeFile(homeA, sessionPath(ID_A), sessionBytes(ID_A, 2));
     workspace(homeA);
     const a = engineFor(homeA, config);
-    await a.upload();
+    const uploaded = await a.upload();
+    assert.ok(uploaded.changedCount >= 1);
+    assert.ok(uploaded.changedFiles.length >= 1);
     const state = a.status();
     assert.equal(state.local.version, 1);
     assert.equal(state.local.pending.length, 0);

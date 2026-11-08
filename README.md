@@ -59,6 +59,7 @@ git init --bare /srv/git/dsh-sync.git
 ```
 
 - **上传 / 下载**：按当前状态自动启用或禁用，禁用时悬停会说明原因；
+- **状态胶囊**：可点击展开详情——「本机有 N 处未上传改动」展开黄色的改动列表；上传成功后的「已同步」展开绿色的上传结果（版本号 + 本次改动列表）；
 - **检查更新**：任何状态都能按，立刻向服务器 fetch 一次版本；
 - **同步**：打开设置弹层（仓库地址、分支、两个刷新间隔）。
 
@@ -89,6 +90,20 @@ git init --bare /srv/git/dsh-sync.git
 
 两个间隔都保存在本机浏览器里（不参与同步）；页面在后台或正在上传/下载时会跳过自动检查。
 自动检查不抢焦点、不打断输入。
+
+### 有改动的文件
+
+点侧栏卡片上的状态胶囊会在胶囊上方展开列表，再点一次收起：
+
+- **有未上传改动时**（黄色背景）：「本机有 N 处未上传改动」，列表是当前改动；
+- **刚上传完成后**（绿色背景）：「已上传 vN，这次更新了 M 个改动」，列表是本次上传的内容。
+
+每行显示成「**工作区 · 会话标题**」：
+
+- 会话：取 `workspace.json` 里的工作区标题和 DSH 投影缓存里的会话标题，悬停可看完整路径；
+- 附件：显示「附件 · 文件名」；
+- 工作区登记：显示「工作区登记」；
+- 标题取不到时退回「工作区 · 会话 xxxxxxxx」。
 
 ## 使用前提
 
@@ -225,23 +240,3 @@ lib/
 src/client/           浏览器端源码（拼接成 lib/client.js）
 tests/                node:test 回归（不碰真实数据目录）
 ```
-
-## 开发
-
-```bash
-npm test              # 全部测试
-npm run build:client  # 修改 src/client 后重新生成 lib/client.js
-npm run check:client  # 只检查产物是否最新
-```
-
-### 发布新版本（维护者）
-
-```bash
-npm run build:client -- --check
-npm test
-npm pack --dry-run          # 确认包里只有 lib/、locale/、cordis.patch.yml、README、LICENSE
-npm version patch           # 或 minor / major
-npm publish --access public # 私有 registry 用 --registry <地址>
-```
-
-发布后，其他人在 DSH 插件界面输入 `dsh-ownsync` 即可安装；升级时安装命令里指定版本。

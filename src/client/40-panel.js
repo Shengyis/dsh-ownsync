@@ -35,16 +35,6 @@ function OwnsyncPanel(props) {
           relation.text,
         )
       : null,
-    state.status && state.status.localChanges && state.status.localChanges.count > 0
-      ? e(
-          'div',
-          { className: 'os-hint' },
-          '有改动的文件（' +
-            state.status.localChanges.count +
-            '）：' +
-            (state.status.localChanges.sample || []).join('、'),
-        )
-      : null,
     state.confirm
       ? e(
           'section',

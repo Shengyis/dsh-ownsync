@@ -4,6 +4,7 @@
 // 侧栏收起成图标栏时只保留一个图标按钮，避免撑破 56px 宽度。
 function OwnsyncDock(props) {
   const state = useSyncStore();
+  const [showChanges, setShowChanges] = useState(false);
   const wide = !props || props.wide !== false;
   useEffect(() => {
     ensureSyncLoaded();
@@ -41,9 +42,77 @@ function OwnsyncDock(props) {
       : '从未同步';
   const relation = relationOf(state.status, state.remote);
   const actions = actionsFor(relation);
+  const dirtyCount = state.status?.localChanges?.count || 0;
+  const dirtyDetails = state.status?.localChanges?.details || [];
+  const dirtySample = state.status?.localChanges?.sample || [];
+  const lastUpload = state.lastUpload;
+  const canExpand = dirtyCount > 0 || Boolean(lastUpload);
   const pillClass =
     'os-pill os-pill-' +
     (relation.level === 'ok' ? 'ok' : relation.level === 'err' ? 'err' : relation.level === 'muted' ? 'muted' : 'warn');
+
+  const pillChildren = [
+    e('span', { className: 'os-dot', 'aria-hidden': 'true', key: 'dot' }),
+    relation.text,
+    canExpand
+      ? e('span', { className: 'os-caret', 'aria-hidden': 'true', key: 'caret' }, showChanges ? '▴' : '▾')
+      : null,
+  ];
+
+  const pill = canExpand
+    ? e(
+        'button',
+        {
+          type: 'button',
+          className: pillClass + ' os-pill-button',
+          title: dirtyCount > 0 ? '查看有改动的文件' : '查看上次上传结果',
+          onClick: () => setShowChanges(value => !value),
+        },
+        ...pillChildren,
+      )
+    : e('span', { className: pillClass }, ...pillChildren);
+
+  const changeList = !showChanges || !canExpand
+    ? null
+    : dirtyCount > 0
+      ? e(
+          'div',
+          { className: 'os-dock-changes os-dock-changes-warn' },
+          '有改动的文件（' + dirtyCount + '）：',
+          dirtyDetails.length
+            ? e(
+                'ul',
+                null,
+                ...dirtyDetails.map(item => e('li', { key: item.path, title: item.path }, item.label)),
+              )
+            : e('div', { className: 'os-dock-paths' }, dirtySample.join('、')),
+          dirtyDetails.length && dirtyCount > dirtyDetails.length
+            ? e('div', { className: 'os-dock-more' }, '……还有 ' + (dirtyCount - dirtyDetails.length) + ' 个')
+            : null,
+        )
+      : e(
+          'div',
+          { className: 'os-dock-changes os-dock-changes-ok' },
+          lastUpload.changedCount > 0
+            ? '已上传 v' + lastUpload.version + '，这次更新了 ' + lastUpload.changedCount + ' 个改动：'
+            : '已是最新 v' + lastUpload.version,
+          (lastUpload.changedFiles || []).length
+            ? e(
+                'ul',
+                null,
+                ...(lastUpload.changedFiles || []).map(item =>
+                  e('li', { key: item.path, title: item.path }, item.label),
+                ),
+              )
+            : null,
+          (lastUpload.changedFiles || []).length && lastUpload.changedCount > lastUpload.changedFiles.length
+            ? e(
+                'div',
+                { className: 'os-dock-more' },
+                '……还有 ' + (lastUpload.changedCount - lastUpload.changedFiles.length) + ' 个',
+              )
+            : null,
+        );
 
   const settingsButton = e(
     'button',
@@ -75,11 +144,8 @@ function OwnsyncDock(props) {
     e(
       'div',
       { className: 'os-dock-card' },
-      e(
-        'div',
-        { className: 'os-dock-row' },
-        e('span', { className: pillClass }, e('span', { className: 'os-dot', 'aria-hidden': 'true' }), relation.text),
-      ),
+      changeList,
+      e('div', { className: 'os-dock-row' }, pill),
       e(
         'div',
         { className: 'os-dock-meta' },
