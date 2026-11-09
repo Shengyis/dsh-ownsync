@@ -47,7 +47,12 @@ const STYLE = `
 .os-foot:focus-visible{outline:2px solid var(--dsw-alias-accent,#2563eb);outline-offset:2px}
 .os-foot-label{font-size:13px;white-space:nowrap}
 .os-nav{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;font-size:15px;line-height:1}
-.os-dock{display:flex;flex-direction:column;gap:6px;flex:1 1 100%;min-width:0;padding:0 2px}
+.os-icon{display:block;flex:0 0 auto;width:15px;height:15px}
+.os-btn-with-icon{display:inline-flex;align-items:center;gap:6px}
+.os-dock{display:flex;flex-direction:column;gap:6px;flex:1 1 100%;min-width:0;width:100%;padding:0 2px}
+/* DSH 的 footerActions 默认是一行；让 ownsync 独占一行，重启按钮等排到下面 */
+[class*="footerActions"]:has(.os-dock){flex-wrap:wrap;align-items:flex-start;row-gap:6px}
+[class*="footerActions"]:has(.os-dock) > *{flex:0 0 100%;min-width:0}
 .os-dock-card{display:flex;flex-direction:column;gap:5px;padding:8px;border-radius:10px;border:1px solid var(--dsw-alias-border-l2,#e2e6ec);background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.06))}
 .os-dock-row{display:flex;min-width:0}
 .os-dock .os-pill{font-size:11px;padding:3px 8px}
@@ -63,7 +68,8 @@ const STYLE = `
 .os-dock-meta>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .os-dock-actions{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:2px}
 .os-dock-actions .os-btn{box-sizing:border-box;height:26px;padding:0 8px;font-size:12px;border-radius:7px}
-.os-dock .os-foot{justify-content:center;align-self:flex-start;width:fit-content;min-width:0}
+.os-dock-foot{display:flex;align-items:center;gap:6px;align-self:flex-start;min-width:0}
+.os-dock-foot .os-foot{justify-content:center;width:fit-content;min-width:0}
 .os-dock-note{display:flex;flex-direction:column;gap:4px;padding:6px 8px;border-radius:6px;border:1px solid transparent;font-size:11px;line-height:1.5;overflow-wrap:anywhere;max-height:7em;overflow:auto}
 .os-dock-note .os-link{align-self:flex-start;font-size:11px;padding:0}
 .os-popover{position:fixed;z-index:900;display:flex;flex-direction:column;overflow:hidden;border-radius:14px;border:1px solid var(--dsw-alias-border-l2,#dbe1e8);background:var(--dsw-alias-bg-layer-1,#fff);box-shadow:0 16px 44px rgba(15,23,42,.2);pointer-events:auto}

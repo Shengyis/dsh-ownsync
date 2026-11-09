@@ -120,16 +120,40 @@ function OwnsyncRecovering() {
         tabIndex: -1,
         ref: cardRef,
       },
-      e('div', { className: 'os-lock-title' }, '需要重启 DSH 才能写回'),
+      e('div', { className: 'os-lock-title' }, '正在重启 DSH'),
       e('p', { className: 'os-lock-text' }, recovering.message || '请稍候。'),
-      recovering.phase === 'manual'
-        ? e(
-            'div',
-            { className: 'os-lock-actions' },
-            e('button', { type: 'button', className: 'os-btn os-btn-primary', onClick: restartFromRecover }, '重启 DSH'),
-            e('button', { type: 'button', className: 'os-btn', onClick: closeRecoverOverlay }, '稍后'),
-          )
-        : null,
+    ),
+  );
+}
+
+/* ---------- 重启确认 ---------- */
+// 手动点「重启」时先弹这个，防止误触。
+function OwnsyncRestartConfirm() {
+  const state = useSyncStore();
+  if (!state.restartConfirm) return null;
+  return e(
+    'div',
+    { className: 'os-lock' },
+    e(
+      'div',
+      { className: 'os-lock-card', role: 'dialog', 'aria-modal': 'true', 'aria-label': '确认重启 DSH' },
+      e('div', { className: 'os-lock-title' }, '重启 DSH？'),
+      e('p', { className: 'os-lock-text' }, '重启会中断正在生成的回复；已经保存的会话不会丢失。'),
+      e(
+        'div',
+        { className: 'os-lock-actions' },
+        e('button', { type: 'button', className: 'os-btn', onClick: cancelRestart }, '取消'),
+        e(
+          'button',
+          {
+            type: 'button',
+            className: 'os-btn os-btn-primary os-btn-with-icon',
+            onClick: confirmRestart,
+          },
+          e(IconRestart),
+          '重启',
+        ),
+      ),
     ),
   );
 }

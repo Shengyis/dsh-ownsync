@@ -2,6 +2,7 @@
 // 注册在 sidebar.footer.action（左下角、头像上方）。侧栏展开时显示一张紧凑卡片：
 // 状态、本机/服务器版本、上次同步、上传/下载；点下面的「同步」打开设置弹层。
 // 侧栏收起成图标栏时只保留一个图标按钮，避免撑破 56px 宽度。
+
 function OwnsyncDock(props) {
   const state = useSyncStore();
   const [showChanges, setShowChanges] = useState(false);
@@ -114,13 +115,14 @@ function OwnsyncDock(props) {
             : null,
         );
 
-  const settingsButton = e(
+  // 设置齿轮：打开同步设置弹层
+  const gearButton = e(
     'button',
     {
       type: 'button',
       className: 'os-foot',
-      title: '打开同步设置',
-      'aria-label': '打开同步设置',
+      title: '同步设置',
+      'aria-label': '同步设置',
       onClick: event => {
         let rect = null;
         try {
@@ -132,11 +134,39 @@ function OwnsyncDock(props) {
         togglePopover(rect);
       },
     },
-    e('span', { className: 'os-nav', 'aria-hidden': 'true' }, '⟳'),
+    e('span', { className: 'os-nav', 'aria-hidden': 'true' }, e(IconGear)),
+    wide ? e('span', { className: 'os-foot-label' }, '设置') : null,
+  );
+
+  // 同步按钮：功能稍后实现
+  const syncButton = e(
+    'button',
+    {
+      type: 'button',
+      className: 'os-foot',
+      title: '同步（暂未实现）',
+      'aria-label': '同步',
+      onClick: () => {},
+    },
+    e('span', { className: 'os-nav', 'aria-hidden': 'true' }, e(IconSync)),
     wide ? e('span', { className: 'os-foot-label' }, '同步') : null,
   );
 
-  if (!wide) return settingsButton;
+  // 重启按钮：规格与「同步」一致，功能稍后实现
+  const restartButton = e(
+    'button',
+    {
+      type: 'button',
+      className: 'os-foot',
+      title: '重启 DSH',
+      'aria-label': '重启 DSH',
+      onClick: () => askRestart(),
+    },
+    e('span', { className: 'os-nav', 'aria-hidden': 'true' }, e(IconRestart)),
+    wide ? e('span', { className: 'os-foot-label' }, '重启') : null,
+  );
+
+  if (!wide) return gearButton;
 
   return e(
     'div',
@@ -219,6 +249,6 @@ function OwnsyncDock(props) {
           )
         : null,
     ),
-    settingsButton,
+    e('div', { className: 'os-dock-foot' }, gearButton, syncButton, restartButton),
   );
 }

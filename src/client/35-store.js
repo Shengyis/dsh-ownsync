@@ -48,6 +48,7 @@ const syncState = {
   notice: null,
   confirm: null,
   recovering: null,
+  restartConfirm: false,
 };
 const syncListeners = new Set();
 let syncLoaded = false;
@@ -209,17 +210,9 @@ async function runSyncAction(kind, token) {
       if (stuck.length) {
         await recoverSessions(result.deferred);
       } else if (kind === 'download' && Array.isArray(result.appliedSessions) && result.appliedSessions.length > 0) {
-        publishSync({
-          notice: {
-            kind: 'warn',
-            text:
-              '已取回 v' +
-              result.version +
-              '，' +
-              result.appliedSessions.length +
-              ' 个会话已写回本机。DSH 里显示的还是旧内容，完全退出再打开 DSH 后即可看到。',
-          },
-        });
+        // 会话已写回磁盘，但界面要重启才能重读；直接重启（不弹确认）
+        const returnTo = result.appliedSessions.length === 1 ? result.appliedSessions[0] : null;
+        await requestRestart(returnTo);
       } else {
         const text = describeResult(kind, result);
         publishSync({
@@ -237,6 +230,53 @@ async function runSyncAction(kind, token) {
     publishSync({ busy: '' });
     refreshSync(true);
   }
+}
+
+/** 点「重启」：先弹确认框，防止误触。 */
+function askRestart() {
+  if (syncState.busy || syncState.restartConfirm) return;
+  publishSync({ restartConfirm: true, notice: null });
+}
+
+function cancelRestart() {
+  publishSync({ restartConfirm: false });
+}
+
+async function confirmRestart() {
+  publishSync({ restartConfirm: false });
+  await restartDsh();
+}
+
+/**
+ * 请求重启；失败时把原因写进提示条。
+ * 成功时不发提示——页面马上就会断开重连。
+ */
+async function requestRestart(returnTo = null) {
+  try {
+    const result = await API.restart(returnTo || null);
+    if (result && result.restarted) return true;
+    const text =
+      result?.reason === 'busy'
+        ? '还有 ' + ((result.tasks || 0) + (result.jobs || 0)) + ' 个任务在运行，等它结束再重启。'
+        : result?.reason === 'installing'
+          ? '插件安装/卸载正在进行，完成后再重启。'
+          : result?.reason === 'cooldown'
+            ? '刚派发过重启，请等几秒再试。'
+            : result?.message || '当前宿主不能自动重启，请完全退出 DSH 后重新打开。';
+    publishSync({ notice: { kind: 'warn', text } });
+    return false;
+  } catch (error) {
+    publishSync({ notice: { kind: 'err', text: '重启失败：' + (error.message || error) } });
+    return false;
+  }
+}
+
+/** 点「重启」：派发一次应用重启；失败时把原因写进提示条。 */
+async function restartDsh() {
+  if (syncState.busy) return;
+  publishSync({ busy: 'restart', notice: null });
+  await requestRestart(null);
+  publishSync({ busy: '' });
 }
 
 async function checkServer() {

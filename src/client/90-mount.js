@@ -28,6 +28,14 @@ function apply(ctx) {
     ctx.slots.register({ name: 'shell.overlay', id: 'dsh-ownsync-recovering', order: 950 }, OwnsyncRecovering),
   );
 
+  // 手动重启前的确认框
+  ctx.slots.inject('shell.overlay', () =>
+    ctx.slots.register(
+      { name: 'shell.overlay', id: 'dsh-ownsync-restart-confirm', order: 940 },
+      OwnsyncRestartConfirm,
+    ),
+  );
+
   // 设置页里也保留一份，找不到侧栏按钮时仍可进入
   ctx.slots.inject('settings.section', () =>
     ctx.slots.register(

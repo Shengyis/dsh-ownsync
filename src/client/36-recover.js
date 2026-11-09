@@ -19,53 +19,6 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function closeRecoverOverlay() {
-  publishSync({ recovering: null });
-}
-
-/** 遮罩上的「重启 DSH」：先尝试自动重启，失败就把手动步骤写在遮罩里。 */
-async function restartFromRecover() {
-  const current = syncState.recovering;
-  if (!current) return;
-  publishSync({ recovering: { ...current, phase: 'restarting', message: '正在重启 DSH…' } });
-
-  let result = null;
-  try {
-    result = await API.restart(current.sessionId || null);
-  } catch (error) {
-    result = { restarted: false, error: String(error?.message || error) };
-  }
-
-  if (result && result.restarted) {
-    publishSync({
-      recovering: {
-        ...current,
-        phase: 'restarting',
-        message: '正在重启 DSH，重新打开后会自动写回并回到这个会话。',
-      },
-    });
-    return;
-  }
-
-  const exe = result?.host?.execPath ? String(result.host.execPath).split(/[\\/]/).pop() : '未知';
-  const why = result?.host?.requireError ? '，原因：' + String(result.host.requireError).slice(0, 60) : '';
-  publishSync({
-    recovering: {
-      ...current,
-      phase: 'manual',
-      message:
-        '当前宿主不能自动重启（electron=' +
-        (result?.host?.electron || '无') +
-        '，type=' +
-        (result?.host?.type || '未知') +
-        '，程序=' +
-        exe +
-        why +
-        '）。请完全退出 DSH 再打开；重新打开后会自动写回并回到这个会话。',
-    },
-  });
-}
-
 async function recoverSessions(deferred) {
   const target = deferred.find(item => item.reason === 'session-writer-held');
   if (!target) return;
@@ -80,6 +33,7 @@ async function recoverSessions(deferred) {
     return;
   }
 
+  const originalId = sessionIdFromPath(target.path);
   publishSync({
     notice: null,
     recovering: { active: true, phase: 'switching', message: '正在切到空白会话…' },
@@ -91,36 +45,16 @@ async function recoverSessions(deferred) {
     await sleep(500);
 
     publishSync({
-      recovering: { active: true, phase: 'restarting', message: '已切到空白会话，正在重启 DSH…' },
+      recovering: { active: true, phase: 'restarting', message: '正在重启 DSH…' },
     });
 
-    const result = await API.restart(sessionIdFromPath(target.path));
-    if (result && result.restarted) {
-      publishSync({
-        recovering: {
-          active: true,
-          phase: 'restarting',
-          message: '正在重启 DSH。重新打开后会自动写回，并回到原来的会话。',
-        },
-      });
-      return; // 页面随后断开
-    }
-
-    publishSync({
-      recovering: {
-        active: true,
-        phase: 'manual',
-        message: '已切到空白会话。请完全退出 DSH 再打开；重新打开后会自动写回，并回到原来的会话。',
-        sessionId: sessionIdFromPath(target.path),
-      },
-    });
+    // 直接重启，不再弹手动重启对话框；失败时提示条会说明原因
+    const restarted = await requestRestart(originalId);
+    if (!restarted) publishSync({ recovering: null });
   } catch (error) {
     publishSync({
-      recovering: {
-        active: true,
-        phase: 'manual',
-        message: '已切到空白会话。请完全退出 DSH 再打开；重新打开后会自动写回。',
-      },
+      recovering: null,
+      notice: { kind: 'err', text: '重启失败：' + (error.message || error) },
     });
   }
 }

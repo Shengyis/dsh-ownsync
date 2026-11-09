@@ -212,7 +212,7 @@ test('卡片上有状态、版本、上次同步和上传/下载', () => {
   assert.match(content, /下载/);
 });
 
-test('点「同步」在按钮上方打开设置弹层；再点收起', () => {
+test('点「设置」齿轮在按钮上方打开设置弹层；再点收起', () => {
   const { find, harness } = mount();
   const dock = find('sidebar.footer.action');
   const popover = find('shell.overlay');
@@ -221,9 +221,14 @@ test('点「同步」在按钮上方打开设置弹层；再点收起', () => {
   assert.equal(draw(harness, popover.component), null);
 
   const tree = draw(harness, dock.component);
-  const button = tree.children[1];
-  assert.equal(button.type, 'button');
-  button.props.onClick({ currentTarget: { getBoundingClientRect: () => ({ left: 20, top: 700 }) } });
+  const foot = tree.children[1];
+  assert.equal(foot.type, 'div');
+  const gear = foot.children[0];
+  assert.equal(gear.type, 'button');
+  const labels = foot.children.map(child => texts(child));
+  assert.match(labels[1], /同步/);
+  assert.match(labels[2], /重启/);
+  gear.props.onClick({ currentTarget: { getBoundingClientRect: () => ({ left: 20, top: 700 }) } });
 
   const panel = draw(harness, popover.component);
   assert.ok(panel, '点击后弹层应当渲染');
@@ -236,7 +241,7 @@ test('点「同步」在按钮上方打开设置弹层；再点收起', () => {
 
   // 再点一次收起
   const again = draw(harness, dock.component);
-  again.children[1].props.onClick({ currentTarget: { getBoundingClientRect: () => ({ left: 20, top: 700 }) } });
+  again.children[1].children[0].props.onClick({ currentTarget: { getBoundingClientRect: () => ({ left: 20, top: 700 }) } });
   assert.equal(draw(harness, popover.component), null);
 });
 
@@ -417,6 +422,100 @@ test('上传后点「已同步」显示本次改动', async () => {
   assert.match(texts(tree), /已上传 v46，这次更新了 2 个改动/);
   assert.match(texts(tree), /Ownsync · 学习源码/);
   assert.match(texts(tree), /Ownsync · M0/);
+});
+
+test('下载写回会话后直接重启，不再提示「重启后可见」', async () => {
+  let restartCalls = 0;
+  const now = Date.now();
+  const { find, harness } = mount(async url => {
+    const href = String(url);
+    if (href.includes('/restart')) {
+      restartCalls += 1;
+      return { json: async () => ({ ok: true, restarted: true, mode: 'helper' }) };
+    }
+    if (href.includes('/download')) {
+      return {
+        json: async () => ({
+          ok: true,
+          downloaded: true,
+          version: 2,
+          appliedSessions: ['session-x'],
+          deferred: [],
+        }),
+      };
+    }
+    if (href.includes('/check')) {
+      return {
+        json: async () => ({
+          ok: true,
+          remote: { inSync: false, localDirty: false, remoteVersion: 2, remoteUpdatedAt: now },
+        }),
+      };
+    }
+    return {
+      json: async () =>
+        statusPayload({
+          configured: true,
+          remote: 'ssh://git@example/srv/git/dsh-sync.git',
+          local: { version: 1, baseSha: 'abc', updatedAt: now, pending: [] },
+        }),
+    };
+  });
+  const dock = find('sidebar.footer.action');
+  draw(harness, dock.component);
+  await new Promise(resolve => setTimeout(resolve, 20));
+
+  let tree = draw(harness, dock.component);
+  buttonByLabel(tree, '下载').props.onClick();
+  await new Promise(resolve => setTimeout(resolve, 40));
+
+  assert.equal(restartCalls, 1);
+  tree = draw(harness, dock.component);
+  assert.doesNotMatch(texts(tree), /已取回/);
+});
+
+test('点重启先弹确认框，确认后才请求重启', async () => {
+  let restartCalls = 0;
+  const { find, harness, registered } = mount(async url => {
+    if (String(url).includes('/restart')) {
+      restartCalls += 1;
+      return { json: async () => ({ ok: true, restarted: false, message: '当前宿主不能自动重启' }) };
+    }
+    return {
+      json: async () =>
+        statusPayload({
+          configured: true,
+          remote: 'ssh://git@example/srv/git/dsh-sync.git',
+          local: { version: 1, baseSha: 'abc', updatedAt: Date.now(), pending: [] },
+        }),
+    };
+  });
+  const dock = find('sidebar.footer.action');
+  const confirm = registered.find(item => item.meta.id === 'dsh-ownsync-restart-confirm');
+  assert.ok(confirm, '没有注册重启确认框');
+  assert.equal(confirm.component({}), null);
+
+  draw(harness, dock.component);
+  await new Promise(resolve => setTimeout(resolve, 20));
+
+  let tree = draw(harness, dock.component);
+  tree.children[1].children[2].props.onClick();
+
+  let dialog = confirm.component({});
+  assert.ok(dialog, '点重启后应弹出确认框');
+  assert.match(texts(dialog), /重启 DSH？/);
+  assert.equal(restartCalls, 0);
+
+  buttonByLabel(dialog, '取消').props.onClick();
+  assert.equal(confirm.component({}), null);
+  assert.equal(restartCalls, 0);
+
+  tree = draw(harness, dock.component);
+  tree.children[1].children[2].props.onClick();
+  dialog = confirm.component({});
+  buttonByLabel(dialog, '重启').props.onClick();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(restartCalls, 1);
 });
 
 test('写回遮罩已注册，默认不渲染', () => {
