@@ -518,6 +518,43 @@ test('点重启先弹确认框，确认后才请求重启', async () => {
   assert.equal(restartCalls, 1);
 });
 
+test('设置里可以关闭自动上传', async () => {
+  const calls = [];
+  const { find, harness } = mount(async (url, options) => {
+    if (String(url).includes('/config')) {
+      calls.push(JSON.parse(options.body));
+      return {
+        json: async () => ({
+          ok: true,
+          config: { autoUpload: false },
+          status: statusPayload({ configured: true, autoUpload: false }),
+        }),
+      };
+    }
+    return { json: async () => statusPayload({ configured: true }) };
+  });
+  const section = find('settings.section');
+  const tree = draw(harness, section.component);
+
+  let checkbox = null;
+  const walk = node => {
+    if (!node || typeof node !== 'object' || checkbox) return;
+    if (node.type === 'input' && node.props?.type === 'checkbox') {
+      checkbox = node;
+      return;
+    }
+    for (const child of node.children || []) walk(child);
+  };
+  walk(tree);
+  assert.ok(checkbox, '没有自动上传开关');
+  assert.equal(checkbox.props.checked, true);
+
+  checkbox.props.onChange({ target: { checked: false } });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].autoUpload, false);
+});
+
 test('写回遮罩已注册，默认不渲染', () => {
   const { registered } = mount();
   const lock = registered.find(item => item.meta.id === 'dsh-ownsync-recovering');

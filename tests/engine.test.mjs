@@ -236,6 +236,35 @@ test('有改动的文件显示工作区与会话标题', async () => {
   }
 });
 
+test('上传前二次校验：文件变化会被发现', async () => {
+  const { root, homeA, config } = setup();
+  try {
+    const file = sessionPath(ID_A);
+    writeFile(homeA, file, sessionBytes(ID_A, 2));
+    const a = engineFor(homeA, config);
+    const snapshot = await a.scan();
+    assert.equal(a.firstChangedPath(snapshot.entries), null);
+    const recorded = a.statsFromEntries(snapshot.entries)[file];
+    assert.equal(recorded[0], fs.statSync(path.join(homeA, file)).size);
+    assert.equal(typeof recorded[2], 'string');
+
+    fs.appendFileSync(
+      path.join(homeA, file),
+      JSON.stringify({ type: 'session/end-seed', seq: 99, time: 99, data: {} }) + '\n',
+    );
+    assert.equal(a.firstChangedPath(snapshot.entries), file);
+
+    const before = a.changeSignature();
+    fs.appendFileSync(
+      path.join(homeA, file),
+      JSON.stringify({ type: 'user/message', seq: 100, time: 100, data: { content: [] } }) + '\n',
+    );
+    assert.notEqual(a.changeSignature(), before);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('服务器为空时检查标记 remoteEmpty，首次上传建出 v1', async () => {
   const { root, homeA, config } = setup();
   try {

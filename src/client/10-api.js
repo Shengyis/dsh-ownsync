@@ -20,5 +20,6 @@ const API = {
   restart: returnTo => post('/ownsync/api/restart', returnTo ? { returnTo } : {}),
   ackReturn: () => post('/ownsync/api/return/ack', {}),
   saveConfig: (remote, branch) => post('/ownsync/api/config', { remote, branch }),
+  setAutoUpload: value => post('/ownsync/api/config', { autoUpload: value }),
   backups: () => fetch('/ownsync/api/backups').then(response => response.json()),
 };

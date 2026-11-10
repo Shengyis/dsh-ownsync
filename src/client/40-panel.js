@@ -109,6 +109,17 @@ function OwnsyncPanel(props) {
       e(
         'label',
         { className: 'os-field-inline' },
+        e('span', { className: 'os-field-label' }, '自动上传'),
+        e('input', {
+          type: 'checkbox',
+          checked: state.status?.autoUpload !== false,
+          title: '一轮对话结束、内容稳定后自动上传',
+          onChange: event => setAutoUpload(event.target.checked),
+        }),
+      ),
+      e(
+        'label',
+        { className: 'os-field-inline' },
         e('span', { className: 'os-field-label' }, '本机状态刷新间隔'),
         e('input', {
           className: 'os-input os-input-num',

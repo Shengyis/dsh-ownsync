@@ -29,9 +29,16 @@ test('配置读写：默认值、保存、损坏文件', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ownsync-config-'));
   try {
     assert.deepEqual(readConfig(home).config, DEFAULT_CONFIG);
+    assert.equal(DEFAULT_CONFIG.autoUpload, true);
     const saved = writeConfig(home, { remote: 'https://git.example.com/a/b.git', branch: 'sync/main' });
-    assert.deepEqual(saved, { remote: 'https://git.example.com/a/b.git', branch: 'sync/main' });
+    assert.deepEqual(saved, { remote: 'https://git.example.com/a/b.git', branch: 'sync/main', autoUpload: true });
     assert.deepEqual(readConfig(home).config, saved);
+
+    const off = writeConfig(home, { autoUpload: false });
+    assert.equal(off.autoUpload, false);
+    assert.equal(readConfig(home).config.autoUpload, false);
+    const on = writeConfig(home, { autoUpload: true });
+    assert.equal(on.autoUpload, true);
 
     fs.writeFileSync(path.join(home, 'ownsync.json'), '{broken');
     const damaged = readConfig(home);
