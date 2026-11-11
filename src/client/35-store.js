@@ -183,10 +183,65 @@ async function checkServerNow(options = {}) {
 function ensureSyncLoaded() {
   if (syncLoaded) return;
   syncLoaded = true;
-  refreshSync(true);
+  refreshSync(true)
+    .then(() => maybeRecoverPending())
+    .then(recovered => {
+      if (!recovered) return maybeAutoDownload({ allowRestart: true });
+      return null;
+    })
+    .catch(() => {
+      /* 启动同步失败不阻塞界面 */
+    });
 }
 
-async function runSyncAction(kind, token) {
+let pendingRecovered = false;
+
+/** 客户端刚加载时如果还有待写回的会话，按"切空白会话 + 重启"处理一次。 */
+async function maybeRecoverPending() {
+  if (pendingRecovered) return false;
+  const pending = syncState.status?.local?.pending || [];
+  if (!pending.length) return false;
+  if (!workspaceNavigation?.startSession) return false;
+  pendingRecovered = true;
+  await recoverSessions(pending.map(file => ({ path: file, reason: 'session-writer-held' })));
+  return true;
+}
+
+let autoDownloadAt = 0;
+
+function canAutoDownload() {
+  const status = syncState.status;
+  const remote = syncState.remote;
+  if (!status?.configured) return false;
+  if (status.autoDownload === false) return false;
+  if (syncState.busy || syncState.recovering) return false;
+  if (!remote || remote.error || remote.skipped) return false;
+  if (remote.inSync) return false;
+  if ((status.local?.pending || []).length > 0) return false;
+  if ((status.localChanges?.count || 0) > 0) return false;
+  if ((status.local?.version || 0) >= (remote.remoteVersion || 0)) return false;
+  if (Date.now() - autoDownloadAt < 60_000) return false;
+  return true;
+}
+
+/**
+ * 自动下载：服务器领先、本机干净时触发。
+ * allowRestart=true 用于"页面刚加载"；窗口只是恢复可见时不自动重启。
+ */
+async function maybeAutoDownload(options = {}) {
+  if (!canAutoDownload()) return false;
+  autoDownloadAt = Date.now();
+  await runSyncAction('download', undefined, { allowRestart: options.allowRestart !== false });
+  return true;
+}
+
+/** 窗口从隐藏恢复可见：检查一次，能安全下载就下载，不自动重启。 */
+async function onWindowVisible() {
+  await checkServerNow({ silent: true });
+  await maybeAutoDownload({ allowRestart: false });
+}
+
+async function runSyncAction(kind, token, options = {}) {
   publishSync({ busy: kind, notice: null, confirm: null });
   try {
     const result = kind === 'upload' ? await API.upload(token) : await API.download(token);
@@ -219,7 +274,16 @@ async function runSyncAction(kind, token) {
       const stuck =
         kind === 'download' ? (result.deferred || []).filter(item => item.reason === 'session-writer-held') : [];
       if (stuck.length) {
-        await recoverSessions(result.deferred);
+        if (options.allowRestart === false) {
+          publishSync({
+            notice: {
+              kind: 'warn',
+              text: '服务器有更新，但有会话正在使用；点「下载」并重启后即可应用。',
+            },
+          });
+        } else {
+          await recoverSessions(result.deferred);
+        }
       } else if (kind === 'download' && Array.isArray(result.appliedSessions) && result.appliedSessions.length > 0) {
         // 会话已写回磁盘，但界面要重启才能重读；直接重启（不弹确认）
         const returnTo = result.appliedSessions.length === 1 ? result.appliedSessions[0] : null;
@@ -306,22 +370,30 @@ async function checkServer() {
   }
 }
 
-/** 切换自动上传开关（存宿主配置，托盘/无界面时也生效）。 */
-async function setAutoUpload(value) {
+/** 切换自动上传/自动下载开关（存宿主配置，托盘/无界面时也生效）。 */
+async function setAutoToggle(request, key, label) {
   publishSync({ notice: null });
   try {
-    const result = await API.setAutoUpload(Boolean(value));
+    const result = await request();
     if (!result || result.ok === false) {
       publishSync({ notice: { kind: 'err', text: errorText(result) } });
       return;
     }
     if (result.status) publishSync({ status: result.status });
     publishSync({
-      notice: { kind: 'ok', text: result.config?.autoUpload ? '自动上传已开启' : '自动上传已关闭' },
+      notice: { kind: 'ok', text: label + (result.config?.[key] ? '已开启' : '已关闭') },
     });
   } catch (error) {
     publishSync({ notice: { kind: 'err', text: '保存失败：' + (error.message || error) } });
   }
+}
+
+async function setAutoUpload(value) {
+  return setAutoToggle(() => API.setAutoUpload(Boolean(value)), 'autoUpload', '自动上传');
+}
+
+async function setAutoDownload(value) {
+  return setAutoToggle(() => API.setAutoDownload(Boolean(value)), 'autoDownload', '自动下载');
 }
 
 async function saveSyncConfig(remote, branch) {

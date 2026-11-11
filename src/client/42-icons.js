@@ -1,7 +1,6 @@
 /* ---------- 图标 ---------- */
-// 同一族的两枚标记：24×24 视图、半径 9、圆头、1.8 线宽、跟随 currentColor。
-// 同步：两段圆弧 + 两个箭头（refresh-cw）
-// 重启：一段圆弧 + 一个箭头（rotate-cw），箭头位置与形状和同步完全一致
+// 设置齿轮：24×24 视图、1.8 线宽、跟随 currentColor。
+// 重启不再用 SVG，直接用可输入的字符 ↻。
 function iconFrame(children) {
   return e(
     'svg',
@@ -22,23 +21,8 @@ function iconFrame(children) {
   );
 }
 
-// 同步：两个半圈箭头
-function IconSync() {
-  return iconFrame([
-    e('polyline', { key: 'arrow-top', points: '23 4 23 10 17 10' }),
-    e('polyline', { key: 'arrow-bottom', points: '1 20 1 14 7 14' }),
-    e('path', { key: 'arc-top', d: 'M3.51 9a9 9 0 0 1 14.85-3.36L23 10' }),
-    e('path', { key: 'arc-bottom', d: 'M1 14l4.64 4.36A9 9 0 0 0 20.49 15' }),
-  ]);
-}
-
-// 重启：单段圆弧 + 一个箭头，箭头与同步的顶部箭头同形同位置
-function IconRestart() {
-  return iconFrame([
-    e('polyline', { key: 'arrow', points: '23 4 23 10 17 10' }),
-    e('path', { key: 'arc', d: 'M20.49 15a9 9 0 1 1-2.12-9.36L23 10' }),
-  ]);
-}
+// 重启图标：可直接输入的字符
+const RESTART_GLYPH = '↻';
 
 // 设置：齿轮（同一网格与线宽）
 function IconGear() {

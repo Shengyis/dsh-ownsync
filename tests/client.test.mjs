@@ -226,8 +226,8 @@ test('点「设置」齿轮在按钮上方打开设置弹层；再点收起', ()
   const gear = foot.children[0];
   assert.equal(gear.type, 'button');
   const labels = foot.children.map(child => texts(child));
-  assert.match(labels[1], /同步/);
-  assert.match(labels[2], /重启/);
+  assert.equal(foot.children.length, 2);
+  assert.match(labels[1], /重启/);
   gear.props.onClick({ currentTarget: { getBoundingClientRect: () => ({ left: 20, top: 700 }) } });
 
   const panel = draw(harness, popover.component);
@@ -424,7 +424,7 @@ test('上传后点「已同步」显示本次改动', async () => {
   assert.match(texts(tree), /Ownsync · M0/);
 });
 
-test('下载写回会话后直接重启，不再提示「重启后可见」', async () => {
+test('打开页面发现服务器领先时自动下载，写回会话后直接重启', async () => {
   let restartCalls = 0;
   const now = Date.now();
   const { find, harness } = mount(async url => {
@@ -463,14 +463,10 @@ test('下载写回会话后直接重启，不再提示「重启后可见」', as
   });
   const dock = find('sidebar.footer.action');
   draw(harness, dock.component);
-  await new Promise(resolve => setTimeout(resolve, 20));
-
-  let tree = draw(harness, dock.component);
-  buttonByLabel(tree, '下载').props.onClick();
-  await new Promise(resolve => setTimeout(resolve, 40));
+  await new Promise(resolve => setTimeout(resolve, 80));
 
   assert.equal(restartCalls, 1);
-  tree = draw(harness, dock.component);
+  const tree = draw(harness, dock.component);
   assert.doesNotMatch(texts(tree), /已取回/);
 });
 
@@ -499,7 +495,7 @@ test('点重启先弹确认框，确认后才请求重启', async () => {
   await new Promise(resolve => setTimeout(resolve, 20));
 
   let tree = draw(harness, dock.component);
-  tree.children[1].children[2].props.onClick();
+  tree.children[1].children[1].props.onClick();
 
   let dialog = confirm.component({});
   assert.ok(dialog, '点重启后应弹出确认框');
@@ -511,7 +507,7 @@ test('点重启先弹确认框，确认后才请求重启', async () => {
   assert.equal(restartCalls, 0);
 
   tree = draw(harness, dock.component);
-  tree.children[1].children[2].props.onClick();
+  tree.children[1].children[1].props.onClick();
   dialog = confirm.component({});
   buttonByLabel(dialog, '重启').props.onClick();
   await new Promise(resolve => setTimeout(resolve, 20));
@@ -553,6 +549,40 @@ test('设置里可以关闭自动上传', async () => {
   await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(calls.length, 1);
   assert.equal(calls[0].autoUpload, false);
+});
+
+test('设置里可以关闭自动下载', async () => {
+  const calls = [];
+  const { find, harness } = mount(async (url, options) => {
+    if (String(url).includes('/config')) {
+      calls.push(JSON.parse(options.body));
+      return {
+        json: async () => ({
+          ok: true,
+          config: { autoDownload: false },
+          status: statusPayload({ configured: true, autoDownload: false }),
+        }),
+      };
+    }
+    return { json: async () => statusPayload({ configured: true }) };
+  });
+  const section = find('settings.section');
+  const tree = draw(harness, section.component);
+
+  const checkboxes = [];
+  const walk = node => {
+    if (!node || typeof node !== 'object') return;
+    if (node.type === 'input' && node.props?.type === 'checkbox') checkboxes.push(node);
+    for (const child of node.children || []) walk(child);
+  };
+  walk(tree);
+  assert.equal(checkboxes.length, 2, '应有自动上传和自动下载两个开关');
+  assert.equal(checkboxes[1].props.checked, true);
+
+  checkboxes[1].props.onChange({ target: { checked: false } });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].autoDownload, false);
 });
 
 test('写回遮罩已注册，默认不渲染', () => {

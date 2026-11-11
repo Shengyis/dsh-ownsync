@@ -30,8 +30,14 @@ test('配置读写：默认值、保存、损坏文件', () => {
   try {
     assert.deepEqual(readConfig(home).config, DEFAULT_CONFIG);
     assert.equal(DEFAULT_CONFIG.autoUpload, true);
+    assert.equal(DEFAULT_CONFIG.autoDownload, true);
     const saved = writeConfig(home, { remote: 'https://git.example.com/a/b.git', branch: 'sync/main' });
-    assert.deepEqual(saved, { remote: 'https://git.example.com/a/b.git', branch: 'sync/main', autoUpload: true });
+    assert.deepEqual(saved, {
+      remote: 'https://git.example.com/a/b.git',
+      branch: 'sync/main',
+      autoUpload: true,
+      autoDownload: true,
+    });
     assert.deepEqual(readConfig(home).config, saved);
 
     const off = writeConfig(home, { autoUpload: false });
@@ -39,6 +45,12 @@ test('配置读写：默认值、保存、损坏文件', () => {
     assert.equal(readConfig(home).config.autoUpload, false);
     const on = writeConfig(home, { autoUpload: true });
     assert.equal(on.autoUpload, true);
+
+    const downloadOff = writeConfig(home, { autoDownload: false });
+    assert.equal(downloadOff.autoDownload, false);
+    assert.equal(readConfig(home).config.autoDownload, false);
+    const downloadOn = writeConfig(home, { autoDownload: true });
+    assert.equal(downloadOn.autoDownload, true);
 
     fs.writeFileSync(path.join(home, 'ownsync.json'), '{broken');
     const damaged = readConfig(home);

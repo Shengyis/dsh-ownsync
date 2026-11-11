@@ -150,7 +150,7 @@ function OwnsyncRestartConfirm() {
             className: 'os-btn os-btn-primary os-btn-with-icon',
             onClick: confirmRestart,
           },
-          e(IconRestart),
+          e('span', { className: 'os-nav', 'aria-hidden': 'true' }, RESTART_GLYPH),
           '重启',
         ),
       ),

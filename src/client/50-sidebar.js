@@ -1,6 +1,6 @@
 /* ---------- 侧栏底部卡片 ---------- */
 // 注册在 sidebar.footer.action（左下角、头像上方）。侧栏展开时显示一张紧凑卡片：
-// 状态、本机/服务器版本、上次同步、上传/下载；点下面的「同步」打开设置弹层。
+// 状态、本机/服务器版本、上次同步、上传/下载；点下面的齿轮打开设置弹层。
 // 侧栏收起成图标栏时只保留一个图标按钮，避免撑破 56px 宽度。
 
 function OwnsyncDock(props) {
@@ -27,9 +27,16 @@ function OwnsyncDock(props) {
       if (syncState.busy) return;
       checkServerNow({ silent: true });
     }, checkMs);
+    // 窗口从隐藏恢复可见：检查一次，服务器领先且本机干净时自动下载（不自动重启）
+    const onVisibility = () => {
+      if (document.visibilityState !== 'visible') return;
+      onWindowVisible();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
     return () => {
       window.clearInterval(timer);
       window.clearInterval(checkTimer);
+      document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [statusMs, checkMs]);
 
@@ -138,21 +145,7 @@ function OwnsyncDock(props) {
     wide ? e('span', { className: 'os-foot-label' }, '设置') : null,
   );
 
-  // 同步按钮：功能稍后实现
-  const syncButton = e(
-    'button',
-    {
-      type: 'button',
-      className: 'os-foot',
-      title: '同步（暂未实现）',
-      'aria-label': '同步',
-      onClick: () => {},
-    },
-    e('span', { className: 'os-nav', 'aria-hidden': 'true' }, e(IconSync)),
-    wide ? e('span', { className: 'os-foot-label' }, '同步') : null,
-  );
-
-  // 重启按钮：规格与「同步」一致，功能稍后实现
+  // 重启按钮：用可直接输入的 ↻ 字符
   const restartButton = e(
     'button',
     {
@@ -162,7 +155,7 @@ function OwnsyncDock(props) {
       'aria-label': '重启 DSH',
       onClick: () => askRestart(),
     },
-    e('span', { className: 'os-nav', 'aria-hidden': 'true' }, e(IconRestart)),
+    e('span', { className: 'os-nav', 'aria-hidden': 'true' }, RESTART_GLYPH),
     wide ? e('span', { className: 'os-foot-label' }, '重启') : null,
   );
 
@@ -249,6 +242,6 @@ function OwnsyncDock(props) {
           )
         : null,
     ),
-    e('div', { className: 'os-dock-foot' }, gearButton, syncButton, restartButton),
+    e('div', { className: 'os-dock-foot' }, gearButton, restartButton),
   );
 }

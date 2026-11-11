@@ -603,3 +603,71 @@ test('会话还在写入时上传被拒绝', async () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('启动同步：服务器领先且本机干净时直接下载', async () => {
+  const { root, homeA, homeB, config } = setup();
+  try {
+    writeFile(homeA, sessionPath(ID_A), sessionBytes(ID_A, 2));
+    workspace(homeA);
+    const a = engineFor(homeA, config);
+    assert.equal((await a.upload()).uploaded, true);
+
+    const b = engineFor(homeB, config);
+    const result = await b.startupSync();
+    assert.equal(result.downloaded, true);
+    assert.ok(fs.existsSync(path.join(homeB, sessionPath(ID_A))));
+    assert.equal(b.status().local.version, 1);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('启动同步：本机有未上传改动时不自动下载', async () => {
+  const { root, homeA, homeB, config } = setup();
+  try {
+    writeFile(homeA, sessionPath(ID_A), sessionBytes(ID_A, 2));
+    workspace(homeA);
+    const a = engineFor(homeA, config);
+    assert.equal((await a.upload()).uploaded, true);
+
+    writeFile(homeB, sessionPath(ID_B), sessionBytes(ID_B, 1));
+    const b = engineFor(homeB, config);
+    const result = await b.startupSync();
+    assert.equal(result.skipped, 'local-dirty');
+    assert.equal(fs.existsSync(path.join(homeB, sessionPath(ID_A))), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('启动同步：已同步时什么都不做', async () => {
+  const { root, homeA, config } = setup();
+  try {
+    writeFile(homeA, sessionPath(ID_A), sessionBytes(ID_A, 2));
+    workspace(homeA);
+    const a = engineFor(homeA, config);
+    assert.equal((await a.upload()).uploaded, true);
+
+    const result = await a.startupSync();
+    assert.equal(result.skipped, 'in-sync');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('启动同步：自动下载关闭时跳过', async () => {
+  const { root, homeA, homeB, config } = setup();
+  try {
+    writeFile(homeA, sessionPath(ID_A), sessionBytes(ID_A, 2));
+    workspace(homeA);
+    const a = engineFor(homeA, config);
+    assert.equal((await a.upload()).uploaded, true);
+
+    const b = engineFor(homeB, { ...config, autoDownload: false });
+    const result = await b.startupSync();
+    assert.equal(result.skipped, 'auto-download-off');
+    assert.equal(fs.existsSync(path.join(homeB, sessionPath(ID_A))), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
