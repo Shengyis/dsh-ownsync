@@ -49,6 +49,7 @@ const syncState = {
   confirm: null,
   recovering: null,
   restartConfirm: false,
+  gate: null,
 };
 const syncListeners = new Set();
 let syncLoaded = false;
@@ -88,7 +89,7 @@ async function refreshSync(withCheck) {
       if (remote) publishSync({ remote });
     }
   } catch (error) {
-    publishSync({ notice: { kind: 'err', text: '无法读取同步状态：' + (error.message || error) } });
+    publishSync({ notice: { kind: 'err', text: '无法读取同步状态: ' + (error.message || error) } });
   }
 }
 
@@ -152,41 +153,102 @@ function scheduleReturnRetry() {
 }
 
 let checkInFlight = false;
+/** 启动/唤醒检查最多挡输入这么久；超时就放手，让用户先继续用。 */
+const GATE_CHECK_TIMEOUT_MS = 8000;
 
-/** 点「检查更新」：立刻连一次服务器。silent=true 用于后台定时检查。 */
+function withTimeout(promise, ms) {
+  return new Promise(resolve => {
+    const timer = setTimeout(() => resolve(null), ms);
+    promise.then(
+      value => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(null);
+      },
+    );
+  });
+}
+
+/** 点「检查更新」：立刻连一次服务器。silent=true 用于后台定时检查。返回检查结果（可能为 null）。 */
 async function checkServerNow(options = {}) {
   const silent = Boolean(options.silent);
-  if (checkInFlight) return;
+  if (checkInFlight) return null;
   checkInFlight = true;
   if (!silent) publishSync({ checking: true });
+  let outcome = null;
   try {
     const checked = await API.check();
+    outcome = checked;
     if (checked?.skipped) {
-      if (!silent) publishSync({ notice: { kind: 'warn', text: '正在同步，请稍后再检查。' } });
-      return;
+      if (!silent) publishSync({ notice: { kind: 'warn', text: '正在同步, 请稍后再检查.' } });
+      return checked;
     }
     publishSync({
       remote: checked && checked.ok ? checked.remote : { error: errorText(checked) },
     });
     if (!silent && (!checked || checked.ok === false)) {
-      publishSync({ notice: { kind: 'err', text: '检查失败：' + errorText(checked) } });
+      publishSync({ notice: { kind: 'err', text: '检查失败: ' + errorText(checked) } });
     }
   } catch (error) {
-    if (!silent) publishSync({ notice: { kind: 'err', text: '检查失败：' + (error.message || error) } });
+    if (!silent) publishSync({ notice: { kind: 'err', text: '检查失败: ' + (error.message || error) } });
   } finally {
     checkInFlight = false;
     if (!silent) publishSync({ checking: false });
   }
+  return outcome;
+}
+
+/**
+ * 打开 DSH / 托盘唤醒时的版本检查：
+ * 检查期间挡住输入；本机不落后就恢复，落后则停在“需要下载”。
+ */
+async function runGateCheck() {
+  if (!syncState.status?.configured) return false;
+  if (syncState.busy || syncState.recovering?.active) return false;
+  if (syncState.gate?.phase === 'checking') return false;
+
+  publishSync({ gate: { phase: 'checking' } });
+  let checked = null;
+  for (let attempt = 0; attempt < 15; attempt += 1) {
+    checked = await withTimeout(checkServerNow({ silent: true }), GATE_CHECK_TIMEOUT_MS);
+    if (!checked) break;
+    if (!checked.skipped) break;
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+
+  if (!checked || checked.skipped || checked.ok === false) {
+    publishSync({ gate: null });
+    return false;
+  }
+  const local = syncState.status?.local?.version || 0;
+  const server = checked.remote?.remoteVersion || 0;
+  const behind = Boolean(checked.remote) && !checked.remote.error && !checked.remote.skipped && server > local;
+  publishSync({ gate: behind ? { phase: 'need-download', local, server } : null });
+  return behind;
+}
+
+/** 托盘/窗口从后台回到前台：立即检查一次。 */
+async function runForegroundCheck() {
+  if (!syncState.status?.configured) return false;
+  if (syncState.busy || syncState.recovering?.active) return false;
+  return runGateCheck();
 }
 
 /** 侧栏卡片挂载时拉一次；重复挂载不重复请求。 */
 function ensureSyncLoaded() {
   if (syncLoaded) return;
   syncLoaded = true;
-  refreshSync(true)
+  refreshSync(false)
     .then(() => maybeRecoverPending())
+    .then(recovered => {
+      if (recovered) return null;
+      return runGateCheck();
+    })
     .catch(() => {
-      /* 启动同步失败不阻塞界面 */
+      publishSync({ gate: null });
     });
 }
 
@@ -219,6 +281,7 @@ async function runSyncAction(kind, token) {
       openPopover();
     } else if (!result || result.ok === false || result.error) {
       publishSync({ notice: { kind: 'err', text: errorText(result) } });
+      if (kind === 'download') publishSync({ gate: null });
       openPopover();
     } else if (kind === 'upload') {
       // 上传结果不直接弹提示条，改成点「已同步」时在卡片里展开
@@ -232,6 +295,8 @@ async function runSyncAction(kind, token) {
         notice: null,
       });
     } else {
+      // 下载已经成功（或有会话待写回），先解除“需要下载”的遮挡
+      publishSync({ gate: null });
       // 会话被宿主占用：走自动恢复（遮罩 → 切空白会话 → 探测 → 重试 → 切回）
       const stuck =
         kind === 'download' ? (result.deferred || []).filter(item => item.reason === 'session-writer-held') : [];
@@ -246,13 +311,14 @@ async function runSyncAction(kind, token) {
         publishSync({
           notice: {
             kind: result.restartRequired ? 'warn' : 'ok',
-            text: text + (result.restartRequired ? '。请完全退出 DSH 后重新打开。' : ''),
+            text: text + (result.restartRequired ? '. 请完全退出 DSH 后重新打开.' : ''),
           },
         });
       }
     }
   } catch (error) {
-    publishSync({ notice: { kind: 'err', text: '操作失败：' + (error.message || error) } });
+    publishSync({ notice: { kind: 'err', text: '操作失败: ' + (error.message || error) } });
+    if (kind === 'download') publishSync({ gate: null });
     openPopover();
   } finally {
     publishSync({ busy: '' });
@@ -285,16 +351,16 @@ async function requestRestart(returnTo = null) {
     if (result && result.restarted) return true;
     const text =
       result?.reason === 'busy'
-        ? '还有 ' + ((result.tasks || 0) + (result.jobs || 0)) + ' 个任务在运行，等它结束再重启。'
+        ? '还有 ' + ((result.tasks || 0) + (result.jobs || 0)) + ' 个任务在运行, 等它结束再重启.'
         : result?.reason === 'installing'
-          ? '插件安装/卸载正在进行，完成后再重启。'
+          ? '插件安装/卸载正在进行, 完成后再重启.'
           : result?.reason === 'cooldown'
-            ? '刚派发过重启，请等几秒再试。'
-            : result?.message || '当前宿主不能自动重启，请完全退出 DSH 后重新打开。';
+            ? '刚派发过重启, 请等几秒再试.'
+            : result?.message || '当前宿主不能自动重启, 请完全退出 DSH 后重新打开.';
     publishSync({ notice: { kind: 'warn', text } });
     return false;
   } catch (error) {
-    publishSync({ notice: { kind: 'err', text: '重启失败：' + (error.message || error) } });
+    publishSync({ notice: { kind: 'err', text: '重启失败: ' + (error.message || error) } });
     return false;
   }
 }
@@ -316,7 +382,7 @@ async function checkServer() {
       publishSync({ remote: { error: errorText(data) }, notice: { kind: 'err', text: errorText(data) } });
     }
   } catch (error) {
-    publishSync({ notice: { kind: 'err', text: '检查失败：' + (error.message || error) } });
+    publishSync({ notice: { kind: 'err', text: '检查失败: ' + (error.message || error) } });
   } finally {
     publishSync({ busy: '' });
     refreshSync(false);
@@ -337,7 +403,7 @@ async function setAutoToggle(request, key, label) {
       notice: { kind: 'ok', text: label + (result.config?.[key] ? '已开启' : '已关闭') },
     });
   } catch (error) {
-    publishSync({ notice: { kind: 'err', text: '保存失败：' + (error.message || error) } });
+    publishSync({ notice: { kind: 'err', text: '保存失败: ' + (error.message || error) } });
   }
 }
 
@@ -352,7 +418,7 @@ async function saveSyncConfig(remote, branch) {
     if (!result || result.ok === false) publishSync({ notice: { kind: 'err', text: errorText(result) } });
     else publishSync({ notice: { kind: 'ok', text: '仓库设置已保存' } });
   } catch (error) {
-    publishSync({ notice: { kind: 'err', text: '保存失败：' + (error.message || error) } });
+    publishSync({ notice: { kind: 'err', text: '保存失败: ' + (error.message || error) } });
   } finally {
     publishSync({ busy: '' });
     refreshSync(true);
@@ -360,52 +426,52 @@ async function saveSyncConfig(remote, branch) {
 }
 
 function dismissSyncConfirm() {
-  publishSync({ confirm: null, notice: { kind: 'warn', text: '已取消。' } });
+  publishSync({ confirm: null, notice: { kind: 'warn', text: '已取消.' } });
 }
 
 /** 提示条上的动作（目前只有"重启 DSH"）。 */
 async function runNoticeAction() {
   const action = syncState.notice?.action;
   if (!action || action.kind !== 'restart') return;
-  publishSync({ notice: { kind: 'warn', text: '正在重启 DSH…' } });
+  publishSync({ notice: { kind: 'warn', text: '正在重启 DSH...' } });
 
   let host = null;
   try {
     const result = await API.restart(action.returnTo || null);
     if (result && result.restarted) {
       publishSync({
-        notice: { kind: 'warn', text: '正在重启 DSH，重新打开后会自动回到这个会话。' },
+        notice: { kind: 'warn', text: '正在重启 DSH, 重新打开后会自动回到这个会话.' },
       });
       return;
     }
     host = result?.host || null;
     try {
-      console.info('[dsh-ownsync] 自动重启不可用，宿主信息：' + JSON.stringify(host || {}));
+      console.info('[dsh-ownsync] 自动重启不可用, 宿主信息: ' + JSON.stringify(host || {}));
     } catch {
       /* 没有 console 也无所谓 */
     }
   } catch (error) {
     try {
-      console.info('[dsh-ownsync] 重启请求失败：' + (error.message || error));
+      console.info('[dsh-ownsync] 重启请求失败: ' + (error.message || error));
     } catch {
       /* ignore */
     }
   }
 
   const exe = host?.execPath ? String(host.execPath).split(/[\\/]/).pop() : '未知';
-  const why = host?.requireError ? '，原因：' + String(host.requireError).slice(0, 60) : '';
+  const why = host?.requireError ? ', 原因: ' + String(host.requireError).slice(0, 60) : '';
   publishSync({
     notice: {
       kind: 'warn',
       text:
-        '当前宿主不能自动重启（electron=' +
+        '当前宿主不能自动重启 (electron=' +
         (host?.electron || '无') +
-        '，type=' +
+        ', type=' +
         (host?.type || '未知') +
-        '，程序=' +
+        ', 程序=' +
         exe +
         why +
-        '）。请完全退出 DSH 再打开，重新打开后会自动回到这个会话。',
+        '). 请完全退出 DSH 再打开, 重新打开后会自动回到这个会话.',
     },
   });
 }

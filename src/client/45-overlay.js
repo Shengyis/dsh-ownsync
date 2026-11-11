@@ -121,7 +121,88 @@ function OwnsyncRecovering() {
         ref: cardRef,
       },
       e('div', { className: 'os-lock-title' }, '正在重启 DSH'),
-      e('p', { className: 'os-lock-text' }, recovering.message || '请稍候。'),
+      e('p', { className: 'os-lock-text' }, recovering.message || '请稍候.'),
+    ),
+  );
+}
+
+/* ---------- 启动/唤醒检查：挡输入，服务器较新时要求下载 ---------- */
+// 打开 DSH 或从托盘恢复时先检查服务器；检查期间盖住输入框。
+// 本机不落后就自动撤掉；落后则停在中间，只给一个「下载」按钮。
+function OwnsyncGate() {
+  const state = useSyncStore();
+  const gate = state.gate;
+  const cardRef = useRef(null);
+
+  useEffect(() => {
+    if (!gate || state.confirm || state.recovering?.active || state.restartConfirm) return;
+    try {
+      cardRef.current?.focus?.();
+    } catch {
+      /* 拿不到焦点也不影响遮挡 */
+    }
+  }, [gate && gate.phase, state.confirm, state.recovering?.active, state.restartConfirm]);
+
+  if (!gate) return null;
+  // 覆盖确认、写回遮罩、重启确认优先；它们结束后如果还需要下载，这个遮挡会重新出现
+  if (state.confirm || state.recovering?.active || state.restartConfirm) return null;
+
+  if (gate.phase === 'checking') {
+    return e(
+      'div',
+      { className: 'os-lock' },
+      e(
+        'div',
+        {
+          className: 'os-lock-card',
+          role: 'dialog',
+          'aria-modal': 'true',
+          'aria-label': '正在检查服务器版本',
+          tabIndex: -1,
+          ref: cardRef,
+        },
+        e('div', { className: 'os-lock-title' }, '正在检查服务器版本'),
+        e('p', { className: 'os-lock-text' }, '检查完成前暂时不能输入.'),
+      ),
+    );
+  }
+
+  const local = gate.local || 0;
+  const server = gate.server || 0;
+  const busy = Boolean(state.busy);
+  return e(
+    'div',
+    { className: 'os-lock' },
+    e(
+      'div',
+      {
+        className: 'os-lock-card',
+        role: 'dialog',
+        'aria-modal': 'true',
+        'aria-label': '服务器有更新',
+        tabIndex: -1,
+        ref: cardRef,
+      },
+      e('div', { className: 'os-lock-title' }, '服务器有更新'),
+      e(
+        'p',
+        { className: 'os-lock-text' },
+        '本机 ' + (local ? 'v' + local : '尚未下载') + ', 服务器 v' + server + '. 需要先下载, 才能继续.',
+      ),
+      e(
+        'div',
+        { className: 'os-lock-actions' },
+        e(
+          'button',
+          {
+            type: 'button',
+            className: 'os-btn os-btn-primary',
+            disabled: busy,
+            onClick: () => runSyncAction('download'),
+          },
+          state.busy === 'download' ? '下载中...' : '下载',
+        ),
+      ),
     ),
   );
 }
@@ -137,8 +218,8 @@ function OwnsyncRestartConfirm() {
     e(
       'div',
       { className: 'os-lock-card', role: 'dialog', 'aria-modal': 'true', 'aria-label': '确认重启 DSH' },
-      e('div', { className: 'os-lock-title' }, '重启 DSH？'),
-      e('p', { className: 'os-lock-text' }, '重启会中断正在生成的回复；已经保存的会话不会丢失。'),
+      e('div', { className: 'os-lock-title' }, '重启 DSH?'),
+      e('p', { className: 'os-lock-text' }, '重启会中断正在生成的回复; 已经保存的会话不会丢失.'),
       e(
         'div',
         { className: 'os-lock-actions' },

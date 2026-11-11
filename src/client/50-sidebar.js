@@ -24,20 +24,36 @@ function OwnsyncDock(props) {
     // 按设置里的间隔自动检查服务器版本：不动焦点、不打断输入
     const checkTimer = window.setInterval(() => {
       if (document.visibilityState === 'hidden') return;
+      if (syncState.gate) return;
       if (syncState.busy) return;
       checkServerNow({ silent: true });
     }, checkMs);
+
+    // 托盘/最小化恢复：窗口从隐藏变为可见时立刻检查一次（检查期间挡输入）
+    let wasHidden = document.visibilityState === 'hidden';
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        wasHidden = true;
+        return;
+      }
+      if (!wasHidden) return;
+      wasHidden = false;
+      void runForegroundCheck();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
     return () => {
       window.clearInterval(timer);
       window.clearInterval(checkTimer);
+      document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [statusMs, checkMs]);
 
   const busy = Boolean(state.busy);
   const local = state.status?.local?.version || 0;
-  const server = state.remote && !state.remote.error ? 'v' + (state.remote.remoteVersion || 0) : '—';
+  const server = state.remote && !state.remote.error ? 'v' + (state.remote.remoteVersion || 0) : '-';
   const lastSync = !state.status
-    ? '—'
+    ? '-'
     : state.status.local?.updatedAt
       ? fmtTime(state.status.local.updatedAt)
       : '从未同步';
@@ -79,23 +95,23 @@ function OwnsyncDock(props) {
       ? e(
           'div',
           { className: 'os-dock-changes os-dock-changes-warn' },
-          '有改动的文件（' + dirtyCount + '）：',
+          '有改动的文件 (' + dirtyCount + '):',
           dirtyDetails.length
             ? e(
                 'ul',
                 null,
                 ...dirtyDetails.map(item => e('li', { key: item.path, title: item.path }, item.label)),
               )
-            : e('div', { className: 'os-dock-paths' }, dirtySample.join('、')),
+            : e('div', { className: 'os-dock-paths' }, dirtySample.join(', ')),
           dirtyDetails.length && dirtyCount > dirtyDetails.length
-            ? e('div', { className: 'os-dock-more' }, '……还有 ' + (dirtyCount - dirtyDetails.length) + ' 个')
+            ? e('div', { className: 'os-dock-more' }, '... 还有 ' + (dirtyCount - dirtyDetails.length) + ' 个')
             : null,
         )
       : e(
           'div',
           { className: 'os-dock-changes os-dock-changes-ok' },
           lastUpload.changedCount > 0
-            ? '已上传 v' + lastUpload.version + '，这次更新了 ' + lastUpload.changedCount + ' 个改动：'
+            ? '已上传 v' + lastUpload.version + ', 这次更新了 ' + lastUpload.changedCount + ' 个改动:'
             : '已是最新 v' + lastUpload.version,
           (lastUpload.changedFiles || []).length
             ? e(
@@ -110,7 +126,7 @@ function OwnsyncDock(props) {
             ? e(
                 'div',
                 { className: 'os-dock-more' },
-                '……还有 ' + (lastUpload.changedCount - lastUpload.changedFiles.length) + ' 个',
+                '... 还有 ' + (lastUpload.changedCount - lastUpload.changedFiles.length) + ' 个',
               )
             : null,
         );
@@ -192,7 +208,7 @@ function OwnsyncDock(props) {
             title: !actions.upload && !busy ? actions.reason : '上传',
             onClick: () => runSyncAction('upload'),
           },
-          state.busy === 'upload' ? '上传中…' : '上传',
+          state.busy === 'upload' ? '上传中...' : '上传',
         ),
         e(
           'button',
@@ -203,7 +219,7 @@ function OwnsyncDock(props) {
             title: !actions.download && !busy ? actions.reason : '下载',
             onClick: () => runSyncAction('download'),
           },
-          state.busy === 'download' ? '下载中…' : '下载',
+          state.busy === 'download' ? '下载中...' : '下载',
         ),
         e(
           'button',
@@ -213,7 +229,7 @@ function OwnsyncDock(props) {
             title: '检查服务器上有没有更新版本',
             onClick: () => checkServerNow(),
           },
-          state.checking ? '检查中…' : '检查更新',
+          state.checking ? '检查中...' : '检查更新',
         ),
       ),
       state.notice

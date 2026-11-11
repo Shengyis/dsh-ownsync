@@ -46,7 +46,7 @@ function OwnsyncPanel(props) {
                 { className: 'os-list' },
                 state.confirm.items.slice(0, 50).map(item => e('li', { key: item }, item)),
                 state.confirm.items.length > 50
-                  ? e('li', { key: 'more' }, '……共 ' + state.confirm.items.length + ' 个')
+                  ? e('li', { key: 'more' }, '... 共 ' + state.confirm.items.length + ' 个')
                   : null,
               )
             : null,
@@ -103,7 +103,7 @@ function OwnsyncPanel(props) {
         e(
           'button',
           { type: 'button', className: 'os-btn', disabled: busy, onClick: save },
-          state.busy === 'config' ? '保存中…' : '保存',
+          state.busy === 'config' ? '保存中...' : '保存',
         ),
       ),
       e(
@@ -113,7 +113,7 @@ function OwnsyncPanel(props) {
         e('input', {
           type: 'checkbox',
           checked: state.status?.autoUpload !== false,
-          title: '一轮对话结束、内容稳定后自动上传',
+          title: '一轮对话结束, 内容稳定后自动上传',
           onChange: event => setAutoUpload(event.target.checked),
         }),
       ),

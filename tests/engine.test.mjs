@@ -136,7 +136,7 @@ test('忘记下载就上传会被拒绝，提示先下载', async () => {
 
     const stale = await a.upload();
     assert.equal(stale.error, 'stale');
-    assert.match(stale.message, /请先点「下载」/);
+    assert.match(stale.message, /请先点"下载"/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -723,3 +723,120 @@ test('启动补写：没有待写回会话时直接跳过', async () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+/** 带时间戳的工作区登记：模拟宿主每次写都会顶 updatedAt。 */
+function workspaceWith(home, sessionIds, updatedAt = '2026-11-11T10:00:00.000Z') {
+  writeFile(
+    home,
+    'storages/workspace.json',
+    JSON.stringify({
+      unit: { name: 'workspace', version: 2 },
+      global: { initialized: true, workspaceIds: ['w1'], archivedSessionIds: [], pinnedSessionIds: [] },
+      tables: {
+        workspaces: {
+          w1: { path: 'E:/Ownsync/Demo', title: 'Demo', sessionIds, createdAt: '2026-11-01T00:00:00.000Z', updatedAt },
+        },
+      },
+    }) + '\n',
+  );
+}
+
+test('新建空对话不会变成未上传改动, 上传也不会多出版本', async () => {
+  const { root, homeA, homeB, config } = setup();
+  try {
+    workspaceWith(homeA, [`session-${ID_A}`]);
+    writeFile(homeA, sessionPath(ID_A), sessionBytes(ID_A, 3));
+    const a = engineFor(homeA, config);
+    assert.equal((await a.upload()).uploaded, true);
+    assert.equal(a.status().localChanges.count, 0);
+
+    // 宿主新建一个空对话: 写日志 + 登记里插到最前 + 顶时间戳
+    writeFile(homeA, sessionPath(ID_B), emptySessionBytes(ID_B));
+    workspaceWith(homeA, [`session-${ID_B}`, `session-${ID_A}`], '2026-11-11T10:53:28.532Z');
+    assert.equal(a.status().localChanges.count, 0, '空对话带来的登记抖动不算改动');
+    assert.equal((await a.upload()).upToDate, true);
+    assert.equal(a.status().local.version, 1, '不应该为登记抖动多推一个版本');
+
+    // 真的发了消息之后, 会话算改动; 登记文件本身没变, 上传时会一并更新
+    writeFile(homeA, sessionPath(ID_B), sessionBytes(ID_B, 2));
+    assert.equal(a.status().localChanges.count, 1);
+    const pushed = await a.upload();
+    assert.equal(pushed.uploaded, true);
+    assert.equal(pushed.version, 2);
+    assert.equal(a.status().localChanges.count, 0);
+
+    // 另一台下载后同样干净: 只顶时间戳不算改动
+    const b = engineFor(homeB, config);
+    assert.equal((await b.download()).downloaded, true);
+    const downloadedRegistry = JSON.parse(fs.readFileSync(path.join(homeB, 'storages/workspace.json'), 'utf8'));
+    assert.deepEqual(downloadedRegistry.tables.workspaces.w1.sessionIds.sort(), [
+      `session-${ID_A}`,
+      `session-${ID_B}`,
+    ]);
+    assert.equal(b.status().localChanges.count, 0);
+    workspaceWith(homeB, [`session-${ID_B}`, `session-${ID_A}`], '2026-11-12T08:00:00.000Z');
+    assert.equal(b.status().localChanges.count, 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('旧 state 没有登记基线: 检查一次就补上', async () => {
+  const { root, homeA, config } = setup();
+  try {
+    workspaceWith(homeA, [`session-${ID_A}`]);
+    writeFile(homeA, sessionPath(ID_A), sessionBytes(ID_A, 3));
+    const a = engineFor(homeA, config);
+    assert.equal((await a.upload()).uploaded, true);
+    assert.ok(a.status().local.version >= 1);
+
+    // 模拟旧版本留下的 state: 没有 workspace 字段
+    const stateFile = path.join(homeA, '.ownsync/state.json');
+    const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    delete state.workspace;
+    fs.writeFileSync(stateFile, JSON.stringify(state, null, 2) + '\n');
+
+    // 宿主只顶了时间戳
+    workspaceWith(homeA, [`session-${ID_A}`], '2026-11-11T11:11:11.111Z');
+    const legacy = engineFor(homeA, config);
+    assert.equal(legacy.status().localChanges.count, 1, '没有基线时按旧逻辑算');
+
+    const checked = await legacy.check();
+    assert.equal(checked.inSync, true);
+    assert.equal(legacy.status().localChanges.count, 0, '检查时补齐基线');
+    assert.ok(JSON.parse(fs.readFileSync(stateFile, 'utf8')).workspace?.digest);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('下载时登记抖动不算未上传改动, 不弹覆盖确认', async () => {
+  const { root, homeA, homeB, config } = setup();
+  try {
+    workspaceWith(homeA, [`session-${ID_A}`]);
+    writeFile(homeA, sessionPath(ID_A), sessionBytes(ID_A, 3));
+    const a = engineFor(homeA, config);
+    assert.equal((await a.upload()).uploaded, true);
+
+    const b = engineFor(homeB, config);
+    assert.equal((await b.download()).downloaded, true);
+
+    // B 的宿主新建了一个空对话, 登记的 id 列表和时间戳都被动过
+    writeFile(homeB, sessionPath(ID_B), emptySessionBytes(ID_B));
+    workspaceWith(homeB, [`session-${ID_B}`, `session-${ID_A}`], '2026-11-11T12:00:00.000Z');
+    assert.equal(b.status().localChanges.count, 0);
+
+    // A 那边上传 v2: 这个会话有了真实内容
+    writeFile(homeA, sessionPath(ID_B), sessionBytes(ID_B, 2));
+    workspaceWith(homeA, [`session-${ID_A}`, `session-${ID_B}`], '2026-11-11T12:30:00.000Z');
+    assert.equal((await a.upload()).version, 2);
+
+    const result = await b.download();
+    assert.equal(result.downloaded, true, JSON.stringify(result));
+    assert.equal(result.version, 2);
+    assert.equal(b.status().localChanges.count, 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+

@@ -71,7 +71,7 @@ function createHarness() {
   return { react, renderNode, updates };
 }
 
-function loadBundle(react, fetchImpl) {
+function loadBundle(react, fetchImpl, options = {}) {
   const source = fs.readFileSync(path.join(root, 'lib', 'client.js'), 'utf8');
   let loaded = null;
   const sandbox = {
@@ -82,9 +82,12 @@ function loadBundle(react, fetchImpl) {
           loaded = definition;
         },
       },
+      setInterval: () => 0,
+      clearInterval: () => {},
     },
     console,
   };
+  if (options.document) sandbox.document = options.document;
   if (fetchImpl) sandbox.fetch = fetchImpl;
   sandbox.setTimeout = setTimeout;
   sandbox.clearTimeout = clearTimeout;
@@ -98,9 +101,9 @@ function loadBundle(react, fetchImpl) {
   });
 }
 
-function mount(fetchImpl) {
+function mount(fetchImpl, options = {}) {
   const harness = createHarness();
-  const client = loadBundle(harness.react, fetchImpl);
+  const client = loadBundle(harness.react, fetchImpl, options);
   const registered = [];
   client.apply({
     slots: {
@@ -116,6 +119,28 @@ function mount(fetchImpl) {
   });
   const find = name => registered.find(item => item.meta.name === name);
   return { client, registered, find, harness };
+}
+
+/** 最小 document 替身：只够 visibilitychange 和样式注入用。 */
+function fakeDocument() {
+  const listeners = new Map();
+  return {
+    visibilityState: 'visible',
+    addEventListener(name, fn) {
+      listeners.set(name, fn);
+    },
+    removeEventListener(name) {
+      listeners.delete(name);
+    },
+    emit(name) {
+      const fn = listeners.get(name);
+      if (fn) fn();
+    },
+    createElement() {
+      return { setAttribute() {}, textContent: '' };
+    },
+    head: { appendChild() {} },
+  };
 }
 
 const draw = (harness, component, props) => harness.renderNode({ type: component, props: props || {} });
@@ -342,7 +367,7 @@ test('点击状态胶囊显示有改动的文件', async () => {
   pill.props.onClick();
 
   tree = draw(harness, dock.component);
-  assert.match(texts(tree), /有改动的文件（2）/);
+  assert.match(texts(tree), /有改动的文件 \(2\)/);
   assert.match(texts(tree), /Ownsync · 学习源码/);
   assert.match(texts(tree), /Ownsync · M0/);
 });
@@ -419,7 +444,7 @@ test('上传后点「已同步」显示本次改动', async () => {
   pill.props.onClick();
 
   tree = draw(harness, dock.component);
-  assert.match(texts(tree), /已上传 v46，这次更新了 2 个改动/);
+  assert.match(texts(tree), /已上传 v46, 这次更新了 2 个改动/);
   assert.match(texts(tree), /Ownsync · 学习源码/);
   assert.match(texts(tree), /Ownsync · M0/);
 });
@@ -465,6 +490,129 @@ test('打开页面发现服务器领先时不会自动下载', async () => {
   assert.equal(buttonByLabel(tree, '下载').props.disabled, false);
 });
 
+test('页面加载检查到服务器较新时，挡住输入并显示下载', async () => {
+  let downloads = 0;
+  const now = Date.now();
+  const { registered, find, harness } = mount(async url => {
+    const href = String(url);
+    if (href.includes('/download')) {
+      downloads += 1;
+      return {
+        json: async () => ({ ok: true, downloaded: true, version: 2, appliedSessions: [], deferred: [] }),
+      };
+    }
+    if (href.includes('/check')) {
+      return {
+        json: async () => ({
+          ok: true,
+          remote: { inSync: false, localDirty: false, remoteVersion: 2, remoteUpdatedAt: now },
+        }),
+      };
+    }
+    return {
+      json: async () =>
+        statusPayload({
+          configured: true,
+          remote: 'ssh://git@example/srv/git/dsh-sync.git',
+          local: { version: 1, baseSha: 'abc', updatedAt: now, pending: [] },
+        }),
+    };
+  });
+  const gate = registered.find(item => item.meta.id === 'dsh-ownsync-gate');
+  assert.ok(gate, '没有注册版本检查遮挡');
+  assert.equal(draw(harness, gate.component), null, '还没检查时不应遮挡');
+
+  const dock = find('sidebar.footer.action');
+  draw(harness, dock.component);
+  await new Promise(resolve => setTimeout(resolve, 80));
+
+  let tree = draw(harness, gate.component);
+  assert.ok(tree, '检查到服务器较新后应出现遮挡');
+  assert.equal(tree.props.className, 'os-lock');
+  assert.match(texts(tree), /服务器有更新/);
+  assert.match(texts(tree), /本机 v1/);
+  assert.match(texts(tree), /服务器 v2/);
+  assert.match(texts(tree), /需要先下载/);
+
+  const download = buttonByLabel(tree, '下载');
+  assert.ok(download, '遮挡里没有下载按钮');
+  download.props.onClick();
+  await new Promise(resolve => setTimeout(resolve, 60));
+
+  assert.equal(downloads, 1);
+  tree = draw(harness, gate.component);
+  assert.equal(tree, null, '下载成功后应解除遮挡');
+});
+
+test('页面加载检查到本机领先或已同步时不遮挡', async () => {
+  const now = Date.now();
+  for (const localVersion of [2, 3]) {
+    const { registered, find, harness } = mount(async url => {
+      if (String(url).includes('/check')) {
+        return {
+          json: async () => ({
+            ok: true,
+            remote: { inSync: localVersion === 2, localDirty: false, remoteVersion: 2, remoteUpdatedAt: now },
+          }),
+        };
+      }
+      return {
+        json: async () =>
+          statusPayload({
+            configured: true,
+            remote: 'ssh://git@example/srv/git/dsh-sync.git',
+            local: { version: localVersion, baseSha: 'abc', updatedAt: now, pending: [] },
+          }),
+      };
+    });
+    const gate = registered.find(item => item.meta.id === 'dsh-ownsync-gate');
+    draw(harness, find('sidebar.footer.action').component);
+    await new Promise(resolve => setTimeout(resolve, 60));
+    assert.equal(draw(harness, gate.component), null, `本机 v${localVersion} 不应被遮挡`);
+  }
+});
+
+test('窗口从隐藏恢复可见时立即检查版本', async () => {
+  const document = fakeDocument();
+  let checks = 0;
+  const now = Date.now();
+  const { find, harness } = mount(
+    async url => {
+      if (String(url).includes('/check')) {
+        checks += 1;
+        return {
+          json: async () => ({
+            ok: true,
+            remote: { inSync: true, localDirty: false, remoteVersion: 1, remoteUpdatedAt: now },
+          }),
+        };
+      }
+      return {
+        json: async () =>
+          statusPayload({
+            configured: true,
+            remote: 'ssh://git@example/srv/git/dsh-sync.git',
+            local: { version: 1, baseSha: 'abc', updatedAt: now, pending: [] },
+          }),
+      };
+    },
+    { document },
+  );
+
+  draw(harness, find('sidebar.footer.action').component);
+  await new Promise(resolve => setTimeout(resolve, 60));
+  const baseline = checks;
+  assert.ok(baseline >= 1, '首次加载没有检查服务器');
+
+  document.visibilityState = 'hidden';
+  document.emit('visibilitychange');
+  document.visibilityState = 'visible';
+  document.emit('visibilitychange');
+  await new Promise(resolve => setTimeout(resolve, 60));
+
+  assert.equal(checks, baseline + 1, '从隐藏恢复可见后没有立即检查');
+});
+
 test('点重启先弹确认框，确认后才请求重启', async () => {
   let restartCalls = 0;
   const { find, harness, registered } = mount(async url => {
@@ -494,7 +642,7 @@ test('点重启先弹确认框，确认后才请求重启', async () => {
 
   let dialog = confirm.component({});
   assert.ok(dialog, '点重启后应弹出确认框');
-  assert.match(texts(dialog), /重启 DSH？/);
+  assert.match(texts(dialog), /重启 DSH\?/);
   assert.equal(restartCalls, 0);
 
   buttonByLabel(dialog, '取消').props.onClick();
@@ -575,7 +723,7 @@ test('服务器为空时建议上传并只启用上传', async () => {
   draw(harness, dock.component);
   await new Promise(resolve => setTimeout(resolve, 20));
   const tree = draw(harness, dock.component);
-  assert.match(texts(tree), /服务器上还没有内容，建议上传/);
+  assert.match(texts(tree), /服务器上还没有内容, 建议上传/);
   assert.equal(buttonByLabel(tree, '上传').props.disabled, false);
   assert.equal(buttonByLabel(tree, '下载').props.disabled, true);
 });

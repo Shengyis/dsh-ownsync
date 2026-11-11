@@ -1,8 +1,8 @@
 /* ---------- 状态与文案 ---------- */
 function fmtTime(value) {
-  if (!value) return '—';
+  if (!value) return '-';
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '—';
+  if (Number.isNaN(date.getTime())) return '-';
   const pad = number => String(number).padStart(2, '0');
   return (
     date.getFullYear() +
@@ -40,9 +40,9 @@ function relationOf(status, remote) {
       ? { id: 'dirty-unknown', level: 'warn', text: '本机有 ' + changes + ' 处未上传改动' }
       : { id: 'unchecked', level: 'muted', text: '尚未检查服务器' };
   }
-  if (remote.error) return { id: 'error', level: 'err', text: '无法连接服务器：' + remote.error };
+  if (remote.error) return { id: 'error', level: 'err', text: '无法连接服务器: ' + remote.error };
   // 服务器还是空的：不管本机有没有内容，都应该先上传
-  if (remote.remoteEmpty) return { id: 'server-empty', level: 'warn', text: '服务器上还没有内容，建议上传' };
+  if (remote.remoteEmpty) return { id: 'server-empty', level: 'warn', text: '服务器上还没有内容, 建议上传' };
 
   const server = remote.remoteVersion || 0;
   if (remote.inSync) {
@@ -52,8 +52,8 @@ function relationOf(status, remote) {
     return { id: 'synced', level: 'ok', text: '已同步' };
   }
   if (local === 0) return { id: 'empty', level: 'warn', text: '本机尚未下载' };
-  if (local < server) return { id: 'server-ahead', level: 'warn', text: '服务器版本较新，建议下载' };
-  if (local > server) return { id: 'local-ahead', level: 'warn', text: '本机版本较新，建议上传' };
+  if (local < server) return { id: 'server-ahead', level: 'warn', text: '服务器版本较新, 建议下载' };
+  if (local > server) return { id: 'local-ahead', level: 'warn', text: '本机版本较新, 建议上传' };
   return { id: 'mismatch', level: 'warn', text: '本机与服务器内容不同' };
 }
 
@@ -67,13 +67,13 @@ const ACTION_RULES = {
   unchecked: { upload: false, download: false, reason: '请先检查服务器' },
   error: { upload: false, download: false, reason: '无法连接服务器' },
   synced: { upload: false, download: false, reason: '已经是最新' },
-  pending: { upload: false, download: true, reason: '有会话待写回本机，请先下载' },
-  'server-empty': { upload: true, download: false, reason: '服务器上还没有内容，请先上传' },
+  pending: { upload: false, download: true, reason: '有会话待写回本机, 请先下载' },
+  'server-empty': { upload: true, download: false, reason: '服务器上还没有内容, 请先上传' },
   empty: { upload: false, download: true, reason: '本机还没有服务器上的内容' },
-  'server-ahead': { upload: false, download: true, reason: '服务器版本较新，请先下载' },
-  'dirty-unknown': { upload: true, download: false, reason: '本机有未上传改动，请先上传' },
-  dirty: { upload: true, download: false, reason: '本机有未上传改动，请先上传' },
-  'local-ahead': { upload: true, download: false, reason: '本机版本较新，请先上传' },
+  'server-ahead': { upload: false, download: true, reason: '服务器版本较新, 请先下载' },
+  'dirty-unknown': { upload: true, download: false, reason: '本机有未上传改动, 请先上传' },
+  dirty: { upload: true, download: false, reason: '本机有未上传改动, 请先上传' },
+  'local-ahead': { upload: true, download: false, reason: '本机版本较新, 请先上传' },
   mismatch: { upload: true, download: true, reason: '' },
 };
 
@@ -83,22 +83,22 @@ function actionsFor(relation) {
 
 function describeResult(action, result) {
   if (!result) return '';
-  if (result.upToDate) return '服务器和本机已经是同一版本（v' + (result.version || 0) + '）';
+  if (result.upToDate) return '服务器和本机已经是同一版本 (v' + (result.version || 0) + ')';
   if (action === 'upload') {
     const parts = ['已上传 v' + result.version];
     parts.push('包含 ' + (result.files || 0) + ' 个文件');
     if (result.deleted) parts.push('移除 ' + result.deleted + ' 个');
-    let text = parts.join('，');
-    if (result.skipped?.length) text += '；' + result.skipped.length + ' 个附件超过大小上限未上传';
+    let text = parts.join(', ');
+    if (result.skipped?.length) text += '; ' + result.skipped.length + ' 个附件超过大小上限未上传';
     return text;
   }
   const parts = ['已取回 v' + result.version];
   parts.push('写入 ' + (result.applied || 0) + ' 个文件');
   if (result.skipped) parts.push('跳过 ' + result.skipped + ' 个未变化的');
   if (result.removed) parts.push('删除 ' + result.removed + ' 个');
-  let text = parts.join('，');
-  if (result.deferred?.length) text += '；' + result.deferred.length + ' 个会话等待关闭后应用';
-  if (result.failures?.length) text += '；' + result.failures.length + ' 个文件写入失败';
+  let text = parts.join(', ');
+  if (result.deferred?.length) text += '; ' + result.deferred.length + ' 个会话等待关闭后应用';
+  if (result.failures?.length) text += '; ' + result.failures.length + ' 个文件写入失败';
   return text;
 }
 

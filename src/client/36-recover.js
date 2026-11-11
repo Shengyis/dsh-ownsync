@@ -27,7 +27,7 @@ async function recoverSessions(deferred) {
     publishSync({
       notice: {
         kind: 'warn',
-        text: '这个会话正在使用。请完全退出 DSH 后重新打开，再点一次「下载」。',
+        text: '这个会话正在使用. 请完全退出 DSH 后重新打开, 再点一次"下载".',
       },
     });
     return;
@@ -36,7 +36,7 @@ async function recoverSessions(deferred) {
   const originalId = sessionIdFromPath(target.path);
   publishSync({
     notice: null,
-    recovering: { active: true, phase: 'switching', message: '正在切到空白会话…' },
+    recovering: { active: true, phase: 'switching', message: '正在切到空白会话...' },
   });
 
   try {
@@ -45,7 +45,7 @@ async function recoverSessions(deferred) {
     await sleep(500);
 
     publishSync({
-      recovering: { active: true, phase: 'restarting', message: '正在重启 DSH…' },
+      recovering: { active: true, phase: 'restarting', message: '正在重启 DSH...' },
     });
 
     // 直接重启，不再弹手动重启对话框；失败时提示条会说明原因
@@ -54,7 +54,7 @@ async function recoverSessions(deferred) {
   } catch (error) {
     publishSync({
       recovering: null,
-      notice: { kind: 'err', text: '重启失败：' + (error.message || error) },
+      notice: { kind: 'err', text: '重启失败: ' + (error.message || error) },
     });
   }
 }

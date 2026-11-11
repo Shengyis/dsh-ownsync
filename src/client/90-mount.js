@@ -28,6 +28,11 @@ function apply(ctx) {
     ctx.slots.register({ name: 'shell.overlay', id: 'dsh-ownsync-recovering', order: 950 }, OwnsyncRecovering),
   );
 
+  // 打开 DSH / 托盘唤醒时的版本检查遮挡，服务器较新时要求下载
+  ctx.slots.inject('shell.overlay', () =>
+    ctx.slots.register({ name: 'shell.overlay', id: 'dsh-ownsync-gate', order: 960 }, OwnsyncGate),
+  );
+
   // 手动重启前的确认框
   ctx.slots.inject('shell.overlay', () =>
     ctx.slots.register(
