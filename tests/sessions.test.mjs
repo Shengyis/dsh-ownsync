@@ -7,6 +7,7 @@ import {
   decodeSessionText,
   deepEqual,
   historyRelation,
+  isEmptySession,
   mergeSessionHistory,
   parseSessionLog,
   validateSessionLog,
@@ -64,6 +65,22 @@ test('seed 行允许没有 seq，普通事件不允许', () => {
   assert.equal(validateSessionLog(ok).ok, true);
   const bad = encode([header(), { type: 'assistant/message', data: {} }, event(0)]);
   assert.equal(validateSessionLog(bad).ok, false);
+});
+
+test('空对话只认 header 与引导/标记事件', () => {
+  const bootstrap = [
+    header(),
+    { type: 'permission/preset', seq: 0, time: 0, data: { preset: 'danger-full-access' } },
+    { type: 'sandbox/mode', seq: 1, time: 0, data: { mode: 'danger-full-access' } },
+    { type: 'approval/policy', seq: 2, time: 0, data: { policy: 'never' } },
+    { type: 'session/end-seed', seq: 3, time: 1, data: {} },
+  ];
+  assert.equal(isEmptySession([header()]), true);
+  assert.equal(isEmptySession(bootstrap), true);
+  assert.equal(isEmptySession([header(), event(0)]), false);
+  assert.equal(isEmptySession([header(), { type: 'user/message', seq: 0, time: 0, data: {} }]), false);
+  // 未知事件按“有内容”处理，避免漏传真实对话
+  assert.equal(isEmptySession([header(), { type: 'future/event', seq: 0, time: 0, data: {} }]), false);
 });
 
 test('zstd 压缩日志能解出原文，多帧拼接也能解', () => {

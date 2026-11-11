@@ -30,13 +30,11 @@ test('配置读写：默认值、保存、损坏文件', () => {
   try {
     assert.deepEqual(readConfig(home).config, DEFAULT_CONFIG);
     assert.equal(DEFAULT_CONFIG.autoUpload, true);
-    assert.equal(DEFAULT_CONFIG.autoDownload, true);
     const saved = writeConfig(home, { remote: 'https://git.example.com/a/b.git', branch: 'sync/main' });
     assert.deepEqual(saved, {
       remote: 'https://git.example.com/a/b.git',
       branch: 'sync/main',
       autoUpload: true,
-      autoDownload: true,
     });
     assert.deepEqual(readConfig(home).config, saved);
 
@@ -46,11 +44,14 @@ test('配置读写：默认值、保存、损坏文件', () => {
     const on = writeConfig(home, { autoUpload: true });
     assert.equal(on.autoUpload, true);
 
-    const downloadOff = writeConfig(home, { autoDownload: false });
-    assert.equal(downloadOff.autoDownload, false);
-    assert.equal(readConfig(home).config.autoDownload, false);
-    const downloadOn = writeConfig(home, { autoDownload: true });
-    assert.equal(downloadOn.autoDownload, true);
+    // 旧版本留下的 autoDownload 字段：读的时候忽略，保存时清掉
+    fs.writeFileSync(
+      path.join(home, 'ownsync.json'),
+      JSON.stringify({ remote: 'https://git.example.com/a/b.git', branch: 'main', autoDownload: false }),
+    );
+    assert.equal('autoDownload' in readConfig(home).config, false);
+    writeConfig(home, { autoUpload: true });
+    assert.equal('autoDownload' in JSON.parse(fs.readFileSync(path.join(home, 'ownsync.json'), 'utf8')), false);
 
     fs.writeFileSync(path.join(home, 'ownsync.json'), '{broken');
     const damaged = readConfig(home);

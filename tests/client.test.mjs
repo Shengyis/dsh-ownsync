@@ -424,25 +424,19 @@ test('上传后点「已同步」显示本次改动', async () => {
   assert.match(texts(tree), /Ownsync · M0/);
 });
 
-test('打开页面发现服务器领先时自动下载，写回会话后直接重启', async () => {
+test('打开页面发现服务器领先时不会自动下载', async () => {
+  let downloadCalls = 0;
   let restartCalls = 0;
   const now = Date.now();
   const { find, harness } = mount(async url => {
     const href = String(url);
+    if (href.includes('/download')) {
+      downloadCalls += 1;
+      return { json: async () => ({ ok: true, downloaded: true, version: 2, appliedSessions: [] }) };
+    }
     if (href.includes('/restart')) {
       restartCalls += 1;
       return { json: async () => ({ ok: true, restarted: true, mode: 'helper' }) };
-    }
-    if (href.includes('/download')) {
-      return {
-        json: async () => ({
-          ok: true,
-          downloaded: true,
-          version: 2,
-          appliedSessions: ['session-x'],
-          deferred: [],
-        }),
-      };
     }
     if (href.includes('/check')) {
       return {
@@ -465,9 +459,10 @@ test('打开页面发现服务器领先时自动下载，写回会话后直接�
   draw(harness, dock.component);
   await new Promise(resolve => setTimeout(resolve, 80));
 
-  assert.equal(restartCalls, 1);
+  assert.equal(downloadCalls, 0, '打开页面不应自动下载');
+  assert.equal(restartCalls, 0, '打开页面不应自动重启');
   const tree = draw(harness, dock.component);
-  assert.doesNotMatch(texts(tree), /已取回/);
+  assert.equal(buttonByLabel(tree, '下载').props.disabled, false);
 });
 
 test('点重启先弹确认框，确认后才请求重启', async () => {
@@ -532,43 +527,6 @@ test('设置里可以关闭自动上传', async () => {
   const section = find('settings.section');
   const tree = draw(harness, section.component);
 
-  let checkbox = null;
-  const walk = node => {
-    if (!node || typeof node !== 'object' || checkbox) return;
-    if (node.type === 'input' && node.props?.type === 'checkbox') {
-      checkbox = node;
-      return;
-    }
-    for (const child of node.children || []) walk(child);
-  };
-  walk(tree);
-  assert.ok(checkbox, '没有自动上传开关');
-  assert.equal(checkbox.props.checked, true);
-
-  checkbox.props.onChange({ target: { checked: false } });
-  await new Promise(resolve => setTimeout(resolve, 20));
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].autoUpload, false);
-});
-
-test('设置里可以关闭自动下载', async () => {
-  const calls = [];
-  const { find, harness } = mount(async (url, options) => {
-    if (String(url).includes('/config')) {
-      calls.push(JSON.parse(options.body));
-      return {
-        json: async () => ({
-          ok: true,
-          config: { autoDownload: false },
-          status: statusPayload({ configured: true, autoDownload: false }),
-        }),
-      };
-    }
-    return { json: async () => statusPayload({ configured: true }) };
-  });
-  const section = find('settings.section');
-  const tree = draw(harness, section.component);
-
   const checkboxes = [];
   const walk = node => {
     if (!node || typeof node !== 'object') return;
@@ -576,13 +534,13 @@ test('设置里可以关闭自动下载', async () => {
     for (const child of node.children || []) walk(child);
   };
   walk(tree);
-  assert.equal(checkboxes.length, 2, '应有自动上传和自动下载两个开关');
-  assert.equal(checkboxes[1].props.checked, true);
+  assert.equal(checkboxes.length, 1, '设置里只应剩自动上传一个开关');
+  assert.equal(checkboxes[0].props.checked, true);
 
-  checkboxes[1].props.onChange({ target: { checked: false } });
+  checkboxes[0].props.onChange({ target: { checked: false } });
   await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].autoDownload, false);
+  assert.equal(calls[0].autoUpload, false);
 });
 
 test('写回遮罩已注册，默认不渲染', () => {

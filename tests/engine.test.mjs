@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { zstdCompressSync } from 'node:zlib';
 import { SyncEngine } from '../lib/engine.js';
 import { parseSessionLog } from '../lib/sessions.js';
+import { ensureRepo, listTree, readBlobs } from '../lib/git-repo.js';
 
 const ID_A = '55555555-5555-5555-5555-555555555555';
 const ID_B = '66666666-6666-6666-6666-666666666666';
@@ -24,17 +25,29 @@ function sessionBytes(id, count) {
   return Buffer.from(rows.map(row => JSON.stringify(row)).join('\n') + '\n');
 }
 
+/** 新建但没发过消息的会话：只有 header 和权限/沙箱/审批引导。 */
+function emptySessionBytes(id) {
+  const rows = [
+    { type: 'session', version: 4, id: `session-${id}`, cwd: 'E:/Ownsync/Demo' },
+    { type: 'permission/preset', seq: 0, time: 0, data: { preset: 'danger-full-access' } },
+    { type: 'sandbox/mode', seq: 1, time: 0, data: { mode: 'danger-full-access' } },
+    { type: 'approval/policy', seq: 2, time: 0, data: { policy: 'never' } },
+    { type: 'session/end-seed', seq: 3, time: 1, data: {} },
+  ];
+  return Buffer.from(rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+}
+
 function writeFile(home, relative, value) {
   const target = path.join(home, relative);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, value);
 }
 
-function workspace(home) {
+function workspace(home, sessionIds = []) {
   writeFile(
     home,
     'storages/workspace.json',
-    JSON.stringify({ global: { workspaceIds: ['w1'] }, tables: { workspaces: { w1: { path: 'E:/Ownsync/Demo', title: 'Demo', sessionIds: [] } } } }) + '\n',
+    JSON.stringify({ global: { workspaceIds: ['w1'] }, tables: { workspaces: { w1: { path: 'E:/Ownsync/Demo', title: 'Demo', sessionIds } } } }) + '\n',
   );
 }
 
@@ -416,6 +429,100 @@ test('空白会话（只有 header）不上传，也不算改动', async () => {
   }
 });
 
+test('只有引导事件的空对话不上传，也不算改动', async () => {
+  const { root, homeA, homeB, config } = setup();
+  try {
+    workspace(homeA);
+    writeFile(homeA, sessionPath(ID_A), sessionBytes(ID_A, 2));
+    writeFile(homeA, sessionPath(ID_B), emptySessionBytes(ID_B));
+
+    const a = engineFor(homeA, config);
+    // 工作区登记 + 真实会话；空对话不算
+    assert.equal(a.status().localChanges.count, 2);
+    const uploaded = await a.upload();
+    assert.equal(uploaded.uploaded, true);
+    assert.equal(uploaded.files, 2);
+    assert.equal(uploaded.deleted, 0);
+
+    const b = engineFor(homeB, config);
+    await b.download();
+    assert.equal(fs.existsSync(path.join(homeB, sessionPath(ID_B))), false);
+
+    // 上传后再新建空对话，仍然不算改动，也不会产生新版本
+    const extra = '77777777-7777-7777-7777-777777777777';
+    writeFile(homeA, `sessions/g/session-${extra}/session.v4.jsonl`, emptySessionBytes(extra));
+    assert.equal(a.status().localChanges.count, 0);
+    assert.equal((await a.upload()).upToDate, true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('已删除的空对话不再算未上传改动', () => {
+  const { root, homeA } = setup();
+  try {
+    const file = sessionPath(ID_B);
+    const id = `session-${ID_B}`;
+    writeFile(
+      homeA,
+      '.ownsync/state.json',
+      JSON.stringify({
+        format: 1,
+        version: 1,
+        baseSha: 'abc',
+        manifest: { [file]: 'deadbeef' },
+        stats: { [file]: [100, Date.now(), ''] },
+        pending: [],
+      }),
+    );
+    writeFile(homeA, '.ownsync/ignored-sessions.json', JSON.stringify([id]));
+
+    const a = engineFor(homeA, {});
+    assert.equal(a.localChanges().count, 0);
+
+    // 没有删除记录时，缺失的清单文件仍然算改动（交给上传的删除流程）
+    fs.rmSync(path.join(homeA, '.ownsync/ignored-sessions.json'));
+    assert.equal(a.localChanges().count, 1);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('上传时工作区登记里不写空对话 id', async () => {
+  const { root, homeA, config } = setup();
+  try {
+    const realId = `session-${ID_A}`;
+    const emptyId = `session-${ID_B}`;
+    workspace(homeA, [emptyId, realId]);
+    writeFile(homeA, sessionPath(ID_A), sessionBytes(ID_A, 2));
+    writeFile(homeA, sessionPath(ID_B), emptySessionBytes(ID_B));
+
+    const a = engineFor(homeA, config);
+    const uploaded = await a.upload();
+    assert.equal(uploaded.uploaded, true);
+    assert.equal(uploaded.files, 2);
+
+    // 本机 workspace.json 保持原样
+    const local = JSON.parse(fs.readFileSync(path.join(homeA, 'storages/workspace.json'), 'utf8'));
+    assert.deepEqual(local.tables.workspaces.w1.sessionIds, [emptyId, realId]);
+
+    // 服务器上的登记和文件都不含空对话
+    const checked = await a.check();
+    const repo = await ensureRepo(homeA, config);
+    const tree = await listTree(repo, checked.remoteSha);
+    assert.equal(tree.some(item => item.path === sessionPath(ID_B)), false);
+    const entry = tree.find(item => item.path === 'storages/workspace.json');
+    const blob = (await readBlobs(repo, [entry.sha])).get(entry.sha);
+    const remote = JSON.parse(blob.toString('utf8'));
+    assert.deepEqual(remote.tables.workspaces.w1.sessionIds, [realId]);
+
+    // 过滤只影响上传内容，本机不会一直显示“有改动”
+    assert.equal(a.status().localChanges.count, 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('只多了 end-seed 标记时下载不再要求覆盖确认', async () => {
   const { root, homeA, homeB, config } = setup();
   try {
@@ -604,69 +711,14 @@ test('会话还在写入时上传被拒绝', async () => {
   }
 });
 
-test('启动同步：服务器领先且本机干净时直接下载', async () => {
-  const { root, homeA, homeB, config } = setup();
-  try {
-    writeFile(homeA, sessionPath(ID_A), sessionBytes(ID_A, 2));
-    workspace(homeA);
-    const a = engineFor(homeA, config);
-    assert.equal((await a.upload()).uploaded, true);
-
-    const b = engineFor(homeB, config);
-    const result = await b.startupSync();
-    assert.equal(result.downloaded, true);
-    assert.ok(fs.existsSync(path.join(homeB, sessionPath(ID_A))));
-    assert.equal(b.status().local.version, 1);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('启动同步：本机有未上传改动时不自动下载', async () => {
-  const { root, homeA, homeB, config } = setup();
-  try {
-    writeFile(homeA, sessionPath(ID_A), sessionBytes(ID_A, 2));
-    workspace(homeA);
-    const a = engineFor(homeA, config);
-    assert.equal((await a.upload()).uploaded, true);
-
-    writeFile(homeB, sessionPath(ID_B), sessionBytes(ID_B, 1));
-    const b = engineFor(homeB, config);
-    const result = await b.startupSync();
-    assert.equal(result.skipped, 'local-dirty');
-    assert.equal(fs.existsSync(path.join(homeB, sessionPath(ID_A))), false);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('启动同步：已同步时什么都不做', async () => {
+test('启动补写：没有待写回会话时直接跳过', async () => {
   const { root, homeA, config } = setup();
   try {
     writeFile(homeA, sessionPath(ID_A), sessionBytes(ID_A, 2));
     workspace(homeA);
     const a = engineFor(homeA, config);
     assert.equal((await a.upload()).uploaded, true);
-
-    const result = await a.startupSync();
-    assert.equal(result.skipped, 'in-sync');
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('启动同步：自动下载关闭时跳过', async () => {
-  const { root, homeA, homeB, config } = setup();
-  try {
-    writeFile(homeA, sessionPath(ID_A), sessionBytes(ID_A, 2));
-    workspace(homeA);
-    const a = engineFor(homeA, config);
-    assert.equal((await a.upload()).uploaded, true);
-
-    const b = engineFor(homeB, { ...config, autoDownload: false });
-    const result = await b.startupSync();
-    assert.equal(result.skipped, 'auto-download-off');
-    assert.equal(fs.existsSync(path.join(homeB, sessionPath(ID_A))), false);
+    assert.equal((await a.startupApply()).skipped, 'no-pending');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

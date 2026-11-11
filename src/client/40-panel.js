@@ -120,17 +120,6 @@ function OwnsyncPanel(props) {
       e(
         'label',
         { className: 'os-field-inline' },
-        e('span', { className: 'os-field-label' }, '自动下载'),
-        e('input', {
-          type: 'checkbox',
-          checked: state.status?.autoDownload !== false,
-          title: '启动或打开窗口时，服务器较新且本机干净时自动下载',
-          onChange: event => setAutoDownload(event.target.checked),
-        }),
-      ),
-      e(
-        'label',
-        { className: 'os-field-inline' },
         e('span', { className: 'os-field-label' }, '本机状态刷新间隔'),
         e('input', {
           className: 'os-input os-input-num',

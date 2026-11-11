@@ -5,9 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { contentKind, listCandidateFiles, normalizeRelative } from '../lib/scope.js';
-import { diffManifests, scanSnapshot, toManifest } from '../lib/snapshot.js';
+import { diffManifests, filterWorkspaceRegistry, scanSnapshot, toManifest } from '../lib/snapshot.js';
 
 const ID = '22222222-2222-2222-2222-222222222222';
+const EMPTY_ID = '33333333-3333-3333-3333-333333333333';
 
 function tempHome() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ownsync-snapshot-'));
@@ -31,6 +32,18 @@ function sessionBytes(refs = []) {
       time: index + 1,
       data: { content: [{ type: 'file', ref: `sha256:${hash}` }] },
     })),
+  ];
+  return Buffer.from(rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+}
+
+/** 新建但没发过消息的会话：只有 header 和几条引导事件。 */
+function emptySessionBytes() {
+  const rows = [
+    { type: 'session', version: 4, id: `session-${EMPTY_ID}`, cwd: 'E:/Ownsync/Demo' },
+    { type: 'permission/preset', seq: 0, time: 0, data: { preset: 'danger-full-access' } },
+    { type: 'sandbox/mode', seq: 1, time: 0, data: { mode: 'danger-full-access' } },
+    { type: 'approval/policy', seq: 2, time: 0, data: { policy: 'never' } },
+    { type: 'session/end-seed', seq: 3, time: 1, data: {} },
   ];
   return Buffer.from(rows.map(row => JSON.stringify(row)).join('\n') + '\n');
 }
@@ -84,6 +97,80 @@ test('扫描只收被引用的附件，并忽略噪声文件', () => {
     ].sort());
     assert.deepEqual(snapshot.invalidSessions.map(item => item.reason).sort(), ['invalid-session-log']);
     assert.equal(snapshot.entries.find(entry => entry.kind === 'attachments').sha256, sha256(used));
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('空对话不进入上传清单', () => {
+  const home = tempHome();
+  try {
+    const real = `sessions/g/session-${ID}/session.v4.jsonl`;
+    const empty = `sessions/g/session-${EMPTY_ID}/session.v4.jsonl`;
+    write(home, real, sessionBytes());
+    write(home, empty, emptySessionBytes());
+    write(home, 'storages/workspace.json', JSON.stringify({ global: { workspaceIds: [] }, tables: { workspaces: {} } }));
+
+    const snapshot = scanSnapshot(home);
+    const sessions = snapshot.entries.filter(entry => entry.kind === 'sessions').map(entry => entry.path);
+    assert.deepEqual(sessions, [real]);
+    assert.deepEqual([...snapshot.emptySessions], [`session-${EMPTY_ID}`]);
+    assert.equal(snapshot.workspaceUpload, null);
+    assert.equal(snapshot.invalidSessions.length, 0);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('上传前从工作区登记里去掉空对话 id', () => {
+  const emptyId = `session-${EMPTY_ID}`;
+  const realId = `session-${ID}`;
+  const registry = {
+    global: {
+      initialized: true,
+      archivedSessionIds: [emptyId],
+      pinnedSessionIds: [realId, emptyId],
+    },
+    tables: {
+      workspaces: {
+        w1: { path: 'E:/Ownsync/Demo', title: 'Demo', sessionIds: [emptyId, realId] },
+      },
+    },
+  };
+  const bytes = Buffer.from(JSON.stringify(registry, null, 2) + '\n', 'utf8');
+  const filtered = filterWorkspaceRegistry(bytes, new Set([emptyId]));
+  assert.ok(filtered instanceof Buffer);
+  const parsed = JSON.parse(filtered.toString('utf8'));
+  assert.deepEqual(parsed.tables.workspaces.w1.sessionIds, [realId]);
+  assert.deepEqual(parsed.global.archivedSessionIds, []);
+  assert.deepEqual(parsed.global.pinnedSessionIds, [realId]);
+
+  // 没有空对话 id 时保持原样（返回 null，调用方直接上传原文件）
+  assert.equal(filterWorkspaceRegistry(bytes, new Set()), null);
+  assert.equal(filterWorkspaceRegistry(bytes, new Set([`session-${EMPTY_ID}`])).equals(bytes), false);
+});
+
+test('已删除的空对话 id 也会从上传的工作区登记里去掉', () => {
+  const home = tempHome();
+  try {
+    const emptyId = `session-${EMPTY_ID}`;
+    const realId = `session-${ID}`;
+    write(
+      home,
+      'storages/workspace.json',
+      JSON.stringify({
+        global: { workspaceIds: ['w1'], archivedSessionIds: [], pinnedSessionIds: [] },
+        tables: { workspaces: { w1: { path: 'E:/Ownsync/Demo', title: 'Demo', sessionIds: [emptyId, realId] } } },
+      }),
+    );
+    write(home, '.ownsync/ignored-sessions.json', JSON.stringify([emptyId]));
+    // 只留真实会话，emptyId 的会话文件已经删除
+    write(home, `sessions/g/session-${ID}/session.v4.jsonl`, sessionBytes());
+
+    const snapshot = scanSnapshot(home);
+    assert.ok(snapshot.workspaceUpload, '删除记录没有参与过滤');
+    const parsed = JSON.parse(snapshot.workspaceUpload.toString('utf8'));
+    assert.deepEqual(parsed.tables.workspaces.w1.sessionIds, [realId]);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }

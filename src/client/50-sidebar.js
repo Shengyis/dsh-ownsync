@@ -27,16 +27,9 @@ function OwnsyncDock(props) {
       if (syncState.busy) return;
       checkServerNow({ silent: true });
     }, checkMs);
-    // 窗口从隐藏恢复可见：检查一次，服务器领先且本机干净时自动下载（不自动重启）
-    const onVisibility = () => {
-      if (document.visibilityState !== 'visible') return;
-      onWindowVisible();
-    };
-    document.addEventListener('visibilitychange', onVisibility);
     return () => {
       window.clearInterval(timer);
       window.clearInterval(checkTimer);
-      document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [statusMs, checkMs]);
 
